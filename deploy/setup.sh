@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Cài Coupon Dashboard lên VPS Ubuntu/Debian.
+# Cài Domain Manager lên VPS Ubuntu/Debian.
 # Dùng:  sudo bash setup.sh digitalpartners.online email@cua-ban.com
 set -euo pipefail
 
 DOMAIN="${1:?Thiếu domain. Vd: sudo bash setup.sh digitalpartners.online you@mail.com}"
-EMAIL="${2:?Thiếu email (dùng cho chứng chỉ SSL Let's Encrypt)}"
-APP_DIR=/opt/coupon-dashboard
-DATA_DIR=/var/lib/coupon-dashboard
+EMAIL="${2:?Thiếu email (dùng cho chứng chỉ SSL miễn phí Letsencrypt)}"
+APP_DIR=/opt/domain-manager
+DATA_DIR=/var/lib/domain-manager
 SRC_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 echo "==> Cài gói hệ thống"
@@ -20,6 +20,14 @@ if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split("."
   apt-get install -y nodejs
 fi
 command -v pm2 >/dev/null || npm install -g pm2
+
+# Chuyển dữ liệu từ bản cài cũ (tên cũ coupon-dashboard) nếu có
+if [ -d /var/lib/coupon-dashboard ] && [ ! -f "$DATA_DIR/dashboard.db" ]; then
+  echo "==> Chuyển dữ liệu từ bản cài cũ"
+  pm2 delete coupon-dashboard >/dev/null 2>&1 || true
+  mkdir -p "$DATA_DIR" && cp -a /var/lib/coupon-dashboard/. "$DATA_DIR"/
+  rm -f /etc/nginx/sites-enabled/coupon-dashboard /etc/nginx/sites-available/coupon-dashboard
+fi
 
 echo "==> Chép mã nguồn vào $APP_DIR"
 mkdir -p "$APP_DIR" "$DATA_DIR"
@@ -35,7 +43,7 @@ fi
 
 cat > "$APP_DIR/ecosystem.config.cjs" <<EOF
 module.exports = { apps: [{
-  name: 'coupon-dashboard', script: 'server.js', cwd: '$APP_DIR',
+  name: 'domain-manager', script: 'server.js', cwd: '$APP_DIR',
   env: { PORT: 3000, HOST: '127.0.0.1', DATA_DIR: '$DATA_DIR', DASH_TZ: 'Asia/Ho_Chi_Minh',
          ADMIN_USER: 'admin', ADMIN_PASS: '$ADMIN_PASS', NODE_NO_WARNINGS: '1' },
   max_memory_restart: '400M'
@@ -44,17 +52,17 @@ EOF
 chmod 600 "$APP_DIR/ecosystem.config.cjs"
 
 echo "==> Khởi động app bằng pm2"
-pm2 delete coupon-dashboard >/dev/null 2>&1 || true
+pm2 delete domain-manager >/dev/null 2>&1 || true
 pm2 start "$APP_DIR/ecosystem.config.cjs"
 pm2 save
 pm2 startup systemd -u root --hp /root >/dev/null || true
 
 echo "==> Cấu hình Nginx cho $DOMAIN"
-cat > /etc/nginx/sites-available/coupon-dashboard <<EOF
+cat > /etc/nginx/sites-available/domain-manager <<EOF
 server {
   listen 80;
   server_name $DOMAIN www.$DOMAIN;
-  client_max_body_size 1m;
+  client_max_body_size 6m;
   location / {
     proxy_pass http://127.0.0.1:3000;
     proxy_http_version 1.1;
@@ -65,7 +73,7 @@ server {
   }
 }
 EOF
-ln -sf /etc/nginx/sites-available/coupon-dashboard /etc/nginx/sites-enabled/coupon-dashboard
+ln -sf /etc/nginx/sites-available/domain-manager /etc/nginx/sites-enabled/domain-manager
 rm -f /etc/nginx/sites-enabled/default
 nginx -t && systemctl reload nginx
 
@@ -86,6 +94,6 @@ if [ "$FIRST_RUN" = 1 ]; then
   echo " Tài khoản: admin   Mật khẩu: $ADMIN_PASS"
   echo " (Hãy lưu lại và đổi mật khẩu sau khi đăng nhập)"
 fi
-echo " Xem log:   pm2 logs coupon-dashboard"
+echo " Xem log:   pm2 logs domain-manager"
 echo " Cập nhật:  tải bản mới lên rồi chạy lại script này (dữ liệu được giữ nguyên)"
 echo "================================================================"

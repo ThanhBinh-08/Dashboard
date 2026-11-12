@@ -5,15 +5,19 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (n) => (Number(n) || 0).toLocaleString('vi-VN');
 const pct = (a, b) => (b ? Math.round((a * 100) / b) : 0);
-const fmtDay = (d) => d.slice(8, 10) + '/' + d.slice(5, 7) + '/' + d.slice(0, 4);
+const fmtDay = (d) => (d ? d.slice(8, 10) + '/' + d.slice(5, 7) + '/' + d.slice(0, 4) : '');
 const fmtRange = (f, t) => (f === t ? fmtDay(f) : (f.slice(0, 4) === t.slice(0, 4) ? fmtDay(f).slice(0, 5) : fmtDay(f)) + ' – ' + fmtDay(t));
 const fmtTime = (ts) => (ts ? new Date(ts).toLocaleString('vi-VN') : '—');
+const fmtDate = (ts) => (ts ? new Date(ts).toLocaleDateString('vi-VN') : '—');
+const today = () => new Date().toLocaleDateString('en-CA');
+const daysLeft = (ts) => Math.floor((ts - Date.now()) / 864e5);
+const hostOfUrl = (u) => String(u || '').replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
 let regionNames; try { regionNames = new Intl.DisplayNames(['vi'], { type: 'region' }); } catch { }
 const countryName = (c) => { if (!c) return 'Không rõ'; try { return (regionNames ? regionNames.of(c) : c) + ' (' + c + ')'; } catch { return c; } };
 const rateBadge = (r) => { const p = Math.round(r * 100); return `<span class="rate ${p >= 40 ? 'g' : p >= 15 ? 'o' : 'b'}">${p}%</span>`; };
 const debounce = (fn, ms = 300) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 
-function toast(msg, err) { const t = $('#toast'); t.textContent = msg; t.className = 'toast show' + (err ? ' err' : ''); clearTimeout(toast.t); toast.t = setTimeout(() => (t.className = 'toast'), 2600); }
+function toast(msg, err) { const t = $('#toast'); t.textContent = msg; t.className = 'toast show' + (err ? ' err' : ''); clearTimeout(toast.t); toast.t = setTimeout(() => (t.className = 'toast'), 2800); }
 async function api(path, opts = {}) {
   const r = await fetch('/api' + path, { method: opts.method || 'GET', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: opts.body ? JSON.stringify(opts.body) : undefined });
   if (r.status === 401 && !path.startsWith('/login')) { showLogin(); throw new Error('Chưa đăng nhập'); }
@@ -21,40 +25,62 @@ async function api(path, opts = {}) {
   if (!r.ok) throw new Error(j.error || 'Có lỗi xảy ra');
   return j;
 }
-async function copyText(t) { try { await navigator.clipboard.writeText(t); } catch { const a = document.createElement('textarea'); a.value = t; document.body.append(a); a.select(); document.execCommand('copy'); a.remove(); } toast('Đã sao chép'); }
+async function copyText(t, msg = 'Đã sao chép') { try { await navigator.clipboard.writeText(t); } catch { const a = document.createElement('textarea'); a.value = t; document.body.append(a); a.select(); document.execCommand('copy'); a.remove(); } toast(msg); }
+function downloadCSV(name, lines) {
+  const csv = '﻿' + lines.map((l) => l.map((c) => '"' + String(c ?? '').replace(/"/g, '""') + '"').join(',')).join('\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); a.download = name; a.click();
+}
 
 const RANGES = [['today', 'Hôm nay'], ['yesterday', 'Hôm qua'], ['7d', '7 ngày qua'], ['14d', '14 ngày qua'], ['30d', '30 ngày qua'], ['90d', '90 ngày qua'], ['thismonth', 'Tháng này'], ['lastmonth', 'Tháng trước'], ['custom', 'Tuỳ chọn...']];
 const CHANNELS = [['all', 'Tất cả các kênh'], ['ads', 'Quảng cáo (Ads)'], ['organic', 'Tìm kiếm tự nhiên'], ['direct', 'Truy cập trực tiếp'], ['other', 'Khác (mạng xã hội, trang khác, email...)']];
 const CH_LABEL = { ads: 'Quảng cáo trả phí', organic: 'Tìm kiếm tự nhiên', direct: 'Truy cập trực tiếp', other: 'Khác' };
 const DEV_LABEL = { mobile: 'Điện thoại', desktop: 'Máy tính', tablet: 'Máy tính bảng', '': 'Không rõ' };
 const OFFER_TYPE = { code: 'Mã giảm giá', deal: 'Ưu đãi' };
+const ROLE_LABEL = { admin: 'Quản trị viên', editor: 'Biên tập viên', viewer: 'Nhân viên (chỉ xem)' };
+const STATUS_LABEL = { active: 'Hiển thị', hidden: 'Ẩn', published: 'Đã xuất bản', draft: 'Bản nháp' };
+const SOURCE_LABEL = { tracker: 'Tự động', import: 'Import', manual: 'Nhập tay' };
+const TPL_TYPES = [['store', 'Cửa hàng'], ['offer', 'Mã & ưu đãi'], ['post', 'Bài viết'], ['page', 'Trang tĩnh'], ['faq', 'Câu hỏi thường gặp'], ['event', 'Sự kiện khuyến mãi'], ['category', 'Danh mục']];
+const IMPORT_KIND = { domains: 'Domain', stores: 'Cửa hàng', offers: 'Mã & ưu đãi' };
+const statusBadge = (s) => `<span class="badge-s ${s === 'active' || s === 'published' ? 'g' : ''}">${STATUS_LABEL[s] || esc(s)}</span>`;
 
 const IC = {
   home: '<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
   chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 9.2-9.2M17 6l3 3M15 8l2 2"/>',
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+  folder: '<path d="M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>',
   store: '<path d="M4 9h16l-1-5H5zM5 9v11h14V9M9 20v-6h6v6"/>',
+  tag: '<path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z"/><circle cx="8" cy="8" r="1.5"/>',
+  calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+  file: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/>',
+  doc: '<path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5"/>',
+  help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17h.01"/>',
+  layout: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12"/>',
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6.5 6.5 0 0 1 3.5 6"/>',
+  upload: '<path d="M12 16V4M7 9l5-5 5 5M4 20h16"/>',
   book: '<path d="M4 4h6a3 3 0 0 1 3 3v13a2 2 0 0 0-2-2H4zM20 4h-6a3 3 0 0 0-3 3v13a2 2 0 0 1 2-2h7z"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
   open: '<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
   edit: '<path d="M4 20h4L19 9l-4-4L4 16zM14 6l4 4"/>',
   trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
   code: '<path d="m8 8-4 4 4 4M16 8l4 4-4 4"/>',
+  copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>',
+  refresh: '<path d="M20 11a8 8 0 1 0-2 5.3M20 4v7h-7"/>',
 };
 const icon = (n) => `<svg viewBox="0 0 24 24">${IC[n]}</svg>`;
 const FILTER_SVG = '<svg viewBox="0 0 24 24"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg>';
 
 /* ================= state ================= */
-const DEFAULTS = { domain: 0, range: '7d', from: '', to: '', channel: 'all', country: '', active: true, sort: 'visits', dir: 'desc', page: 1, per: 10, q: '', kq: '', kstore: 0, ksort: 'visits', kdir: 'desc', kpage: 1 };
-let S = { ...DEFAULTS }; try { Object.assign(S, JSON.parse(localStorage.getItem('dash_state') || '{}')); } catch { }
-const save = () => { try { localStorage.setItem('dash_state', JSON.stringify(S)); } catch { } };
-let ME = null, DOMAINS = [];
+const DEFAULTS = { domain: 0, group: '', range: '7d', from: '', to: '', channel: 'all', country: '', active: true, sort: 'visits', dir: 'desc', page: 1, per: 10, q: '', kq: '', kstore: 0, ksort: 'visits', kdir: 'desc', kpage: 1, navClosed: [], res: {} };
+let S = { ...DEFAULTS }; try { Object.assign(S, JSON.parse(localStorage.getItem('dm_state') || '{}')); } catch { }
+const save = () => { try { localStorage.setItem('dm_state', JSON.stringify(S)); } catch { } };
+let ME = null, DOMAINS = [], GROUPS = [];
 const isAdmin = () => ME && ME.role === 'admin';
+const canEdit = () => ME && (ME.role === 'admin' || ME.role === 'editor');
+const curDomain = () => DOMAINS.find((d) => d.id === S.domain);
 
 function qs(extra = {}) {
-  const o = { domain: S.domain || '', range: S.range, channel: S.channel, country: S.country, ...extra };
+  const o = { domain: S.domain || '', group: S.domain ? '' : S.group, range: S.range, channel: S.channel, country: S.country, ...extra };
   if (o.range === 'custom') { o.from = extra.from ?? S.from; o.to = extra.to ?? S.to; }
   return new URLSearchParams(Object.entries(o).filter(([, v]) => v !== '' && v != null)).toString();
 }
@@ -73,30 +99,49 @@ $('#pwBtn').onclick = () => {
     <form class="m-body form" id="pwForm"><label>Mật khẩu hiện tại<input type="password" name="old" required></label>
     <label>Mật khẩu mới<input type="password" name="new" minlength="6" required></label>
     <button class="btn primary">Lưu</button></form>`, 'sm');
-  $('#pwForm').onsubmit = async (e) => { e.preventDefault(); const f = new FormData(e.target); try { await api('/me/password', { method: 'POST', body: Object.fromEntries(f) }); closeModal(); toast('Đã đổi mật khẩu'); } catch (er) { toast(er.message, 1); } };
+  $('#pwForm').onsubmit = async (e) => { e.preventDefault(); try { await api('/me/password', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); closeModal(); toast('Đã đổi mật khẩu'); } catch (er) { toast(er.message, 1); } };
 };
 
 const NAV = [
-  ['dashboard', 'Bảng điều khiển', 'home'], ['performance', 'Hiệu quả cửa hàng', 'chart'], ['keywords', 'Từ khoá', 'key'],
-  ['grp', 'Dữ liệu chính'], ['domains', 'Domain', 'globe'], ['stores', 'Cửa hàng', 'store'],
-  ['grp', 'Hệ thống'], ['users', 'Nhân viên', 'users', 'admin'], ['guide', 'Hướng dẫn cài đặt', 'book'],
+  { items: [['dashboard', 'Bảng điều khiển', 'home'], ['performance', 'Hiệu quả cửa hàng', 'chart'], ['keywords', 'Từ khoá', 'key']] },
+  { title: 'Dữ liệu chính', items: [['domains', 'Domain', 'globe'], ['categories', 'Danh mục', 'folder'], ['stores', 'Cửa hàng', 'store'], ['offers', 'Mã & ưu đãi', 'tag'], ['promo_events', 'Sự kiện khuyến mãi', 'calendar']] },
+  { title: 'Nội dung', items: [['pages', 'Trang tĩnh', 'file'], ['posts', 'Bài viết', 'doc'], ['faqs', 'Câu hỏi thường gặp', 'help'], ['templates', 'Mẫu nội dung', 'layout']] },
+  { title: 'Hệ thống', items: [['users', 'Nhân viên', 'users', 'admin'], ['imports', 'Lịch sử import', 'upload'], ['guide', 'Hướng dẫn', 'book']] },
 ];
+const curView = () => (location.hash.slice(2) || 'performance').split('?')[0];
 function renderNav() {
-  const cur = (location.hash.slice(2) || 'performance').split('?')[0];
-  $('#nav').innerHTML = NAV.filter((n) => !(n[3] === 'admin' && !isAdmin())).map((n) => n[0] === 'grp' ? `<div class="grp">${n[1]}</div>`
-    : `<a href="#/${n[0]}" class="${cur === n[0] ? 'active' : ''}">${icon(n[2])}${n[1]}</a>`).join('');
+  const cur = curView();
+  $('#nav').innerHTML = NAV.map((g) => {
+    const items = g.items.filter((n) => !(n[3] === 'admin' && !isAdmin()))
+      .map((n) => `<a href="#/${n[0]}" class="${cur === n[0] ? 'active' : ''}">${icon(n[2])}${n[1]}</a>`).join('');
+    return g.title ? `<div class="grp ${S.navClosed.includes(g.title) ? 'closed' : ''}" data-grp="${esc(g.title)}">${g.title}</div><div class="grp-items">${items}</div>` : items;
+  }).join('');
+  $$('[data-grp]').forEach((el) => (el.onclick = () => {
+    const t = el.dataset.grp; S.navClosed = S.navClosed.includes(t) ? S.navClosed.filter((x) => x !== t) : [...S.navClosed, t]; save(); el.classList.toggle('closed');
+  }));
 }
 async function loadDomains() {
-  DOMAINS = await api('/domains');
+  [DOMAINS, GROUPS] = await Promise.all([api('/domains'), api('/domain-groups')]);
   if (S.domain && !DOMAINS.some((d) => d.id === S.domain)) { S.domain = 0; save(); }
-  $('#domainSel').innerHTML = `<option value="0">Tất cả domain (${DOMAINS.length})</option>` + DOMAINS.map((d) => `<option value="${d.id}" ${d.id === S.domain ? 'selected' : ''}>${esc(d.name)} – ${esc(d.host)}</option>`).join('');
+  if (S.group && !GROUPS.some((g) => g.category === S.group)) { S.group = ''; save(); }
+  const v = S.domain ? String(S.domain) : S.group ? 'g:' + S.group : '0';
+  $('#domainSel').innerHTML = `<option value="0">Tất cả domain (${DOMAINS.length})</option>`
+    + (GROUPS.length ? `<optgroup label="Nhóm domain">${GROUPS.map((g) => `<option value="g:${esc(g.category)}">Nhóm: ${esc(g.category)} (${g.n})</option>`).join('')}</optgroup>` : '')
+    + `<optgroup label="Domain">${DOMAINS.map((d) => `<option value="${d.id}">${esc(d.name)}${d.name !== d.host ? ' – ' + esc(d.host) : ''}</option>`).join('')}</optgroup>`;
+  $('#domainSel').value = v;
 }
-$('#domainSel').onchange = (e) => { S.domain = +e.target.value; S.page = 1; S.kpage = 1; S.kstore = 0; S.country = ''; save(); render(); };
+function setScope(v) {
+  v = String(v);
+  if (v.startsWith('g:')) { S.group = v.slice(2); S.domain = 0; } else { S.domain = +v; S.group = ''; }
+  S.page = 1; S.kpage = 1; S.kstore = 0; S.country = ''; Object.values(S.res).forEach((r) => { r.page = 1; r.f = {}; }); save();
+  $('#domainSel').value = v;
+}
+$('#domainSel').onchange = (e) => { setScope(e.target.value); render(); };
 
 async function boot() {
   try { ME = await api('/me'); } catch { return; }
   $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
-  $('#meName').textContent = ME.name || ME.username; $('#meRole').textContent = ME.role === 'admin' ? 'Quản trị viên' : 'Nhân viên (chỉ xem)';
+  $('#meName').textContent = ME.name || ME.username; $('#meRole').textContent = ROLE_LABEL[ME.role] || ME.role;
   await loadDomains(); render();
 }
 window.addEventListener('hashchange', () => { $('#sidebar').classList.remove('open'); render(); });
@@ -104,8 +149,7 @@ window.addEventListener('hashchange', () => { $('#sidebar').classList.remove('op
 const VIEWS = {};
 async function render() {
   renderNav();
-  const name = (location.hash.slice(2) || 'performance').split('?')[0];
-  const v = VIEWS[name] || VIEWS.performance;
+  const v = VIEWS[curView()] || VIEWS.performance;
   try { await v(); } catch (e) { if (e.message !== 'Chưa đăng nhập') $('#view').innerHTML = `<div class="card empty">${esc(e.message)}</div>`; }
 }
 
@@ -114,6 +158,13 @@ function openModal(html, size = '') { const b = $('#modalBox'); b.className = 'm
 function closeModal() { $('#modal').classList.add('hidden'); document.body.style.overflow = ''; }
 $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal' || e.target.closest('[data-close]')) closeModal(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+function confirmBox(title, html, okLabel = 'Xoá') {
+  return new Promise((resolve) => {
+    openModal(`<div class="m-head"><h2>${esc(title)}</h2><button class="m-close" data-close>×</button></div><div class="m-body">${html}</div>
+      <div class="m-foot"><button class="btn" data-close>Huỷ</button><span style="flex:1"></span><button class="btn danger" id="cfOk">${esc(okLabel)}</button></div>`, 'sm');
+    $('#cfOk').onclick = () => { closeModal(); resolve(true); };
+  });
+}
 
 /* ================= shared filter bar ================= */
 async function filtersHTML({ channel = true, country = true } = {}) {
@@ -131,7 +182,7 @@ function bindFilters(rerender) {
   const on = (id, fn) => { const el = $(id); if (el) el.onchange = fn; };
   on('#fRange', (e) => {
     S.range = e.target.value;
-    if (S.range === 'custom' && !S.from) { const t = new Date(); S.to = t.toISOString().slice(0, 10); t.setDate(t.getDate() - 7); S.from = t.toISOString().slice(0, 10); }
+    if (S.range === 'custom' && !S.from) { const t = new Date(); S.to = t.toLocaleDateString('en-CA'); t.setDate(t.getDate() - 7); S.from = t.toLocaleDateString('en-CA'); }
     S.page = S.kpage = 1; save(); rerender();
   });
   on('#fFrom', (e) => { S.from = e.target.value; S.page = S.kpage = 1; save(); rerender(); });
@@ -142,29 +193,55 @@ function bindFilters(rerender) {
 function pagerHTML(total, page, per, label = 'kết quả') {
   const pages = Math.max(1, Math.ceil(total / per));
   const from = total ? (page - 1) * per + 1 : 0, to = Math.min(total, page * per);
-  let nums = []; for (let i = 1; i <= pages; i++) if (i === 1 || i === pages || Math.abs(i - page) <= 2) nums.push(i); else if (nums[nums.length - 1] !== '…') nums.push('…');
+  const nums = []; for (let i = 1; i <= pages; i++) if (i === 1 || i === pages || Math.abs(i - page) <= 2) nums.push(i); else if (nums[nums.length - 1] !== '…') nums.push('…');
   return `<div class="pager"><span>Đang hiện từ ${from} đến ${to} của ${fmt(total)} ${label}</span><span class="sp"></span>
     <span class="per"><span>Mỗi trang</span><select data-per>${[10, 20, 50, 100].map((n) => `<option ${n === per ? 'selected' : ''}>${n}</option>`).join('')}</select></span>
-    <span class="pages"><button data-page="${page - 1}" ${page <= 1 ? 'disabled' : ''}>‹</button>${nums.map((n) => n === '…' ? '<button disabled>…</button>' : `<button data-page="${n}" class="${n === page ? 'on' : ''}">${n}</button>`).join('')}<button data-page="${page + 1}" ${page >= pages ? 'disabled' : ''}>›</button></span></div>`;
+    <span class="pages">${nums.map((n) => n === '…' ? '<button disabled>…</button>' : `<button data-page="${n}" class="${n === page ? 'on' : ''}">${n}</button>`).join('')}<button data-page="${page + 1}" ${page >= pages ? 'disabled' : ''}>›</button></span></div>`;
+}
+function bindPager(root, onPage, onPer) {
+  $$('[data-page]', root).forEach((b) => (b.onclick = () => onPage(+b.dataset.page)));
+  const p = $('[data-per]', root); if (p) p.onchange = (e) => onPer(+e.target.value);
 }
 function sortTh(label, key, cur, dir, cls = '') { return `<th class="sort ${cls} ${cur === key ? dir : ''}" data-sort="${key}">${label}</th>`; }
+function needDomainHTML(title) {
+  return `<div class="page-head"><h1>${esc(title)}</h1></div><div class="card pick-domain">
+    ${DOMAINS.length ? `<div>Dữ liệu ${esc(title.toLowerCase())} được quản lý riêng cho từng domain. Hãy chọn một domain:</div>
+    <select id="pickDom"><option value="">— Chọn domain —</option>${DOMAINS.map((d) => `<option value="${d.id}">${esc(d.name)} – ${esc(d.host)}</option>`).join('')}</select>`
+    : `<div>Chưa có domain nào.</div><a class="btn primary" href="#/domains">+ Thêm domain đầu tiên</a>`}</div>`;
+}
+function bindNeedDomain() { const s = $('#pickDom'); if (s) s.onchange = (e) => { if (e.target.value) { setScope(e.target.value); render(); } }; }
 
-/* ================= Dashboard ================= */
+/* ================= Bảng điều khiển ================= */
 VIEWS.dashboard = async () => {
   const view = $('#view');
   const [fh, d] = await Promise.all([filtersHTML(), api('/overview?' + qs())]);
-  const k = d.kpi, p = d.prev;
+  const k = d.kpi, p = d.prev, c = d.counts, h = d.health;
   const delta = (a, b) => { if (!b) return a ? '<span class="delta up">mới</span>' : ''; const x = Math.round(((a - b) * 100) / b); return `<span class="delta ${x >= 0 ? 'up' : 'down'}">${x >= 0 ? '▲' : '▼'} ${Math.abs(x)}%</span>`; };
   const maxDay = Math.max(1, ...d.byDay.map((r) => r.visits));
-  const domName = S.domain ? (DOMAINS.find((x) => x.id === S.domain) || {}).name : 'Tất cả domain';
-  view.innerHTML = `<h1 class="page">Bảng điều khiển · ${esc(domName)} <span class="sub">${fmtRange(d.from, d.to)}</span></h1>${fh}
-  ${!DOMAINS.length ? `<div class="card empty">Chưa có domain nào. <a href="#/domains">Thêm domain đầu tiên →</a></div>` : ''}
+  const scopeName = S.domain ? (curDomain() || {}).name : S.group ? 'Nhóm ' + S.group : 'Tất cả domain';
+  const alert = (n, label, href) => `<a class="alert ${n ? 'bad' : 'ok'}" href="${href}"><b>${fmt(n)}</b><span>${label}</span></a>`;
+  view.innerHTML = `<div class="page-head"><h1>Bảng điều khiển · ${esc(scopeName)}</h1><span class="sub">${fmtRange(d.from, d.to)}</span><span class="sp"></span>
+    <span class="status"><span class="dot ${d.online ? 'on' : ''}"></span>${fmt(d.online)} người đang xem (5 phút)</span></div>${fh}
+  ${!DOMAINS.length ? `<div class="card empty" style="margin-bottom:16px">Chưa có domain nào. <a href="#/domains">Thêm domain đầu tiên →</a></div>` : ''}
   <div class="kpis">
     <div class="kpi"><div class="l">Lượt vào</div><div class="v">${fmt(k.visits)}</div><div class="s">${delta(k.visits, p.visits)} so với kỳ trước</div></div>
     <div class="kpi"><div class="l">Từ Ads</div><div class="v">${fmt(k.ads)}</div><div class="s">${pct(k.ads, k.visits)}% lượt vào</div></div>
     <div class="kpi"><div class="l">Tỉ lệ bấm</div><div class="v">${pct(k.clicked, k.visits)}%</div><div class="s">${fmt(k.clicked)} lượt vào có bấm</div></div>
     <div class="kpi"><div class="l">Lượt bấm</div><div class="v">${fmt(k.clicks)}</div><div class="s">${delta(k.clicks, p.clicks)}</div></div>
     <div class="kpi"><div class="l">Copy mã</div><div class="v">${fmt(k.copies)}</div><div class="s">${delta(k.copies, p.copies)}</div></div>
+  </div>
+  <div class="counts">
+    <a class="kpi" href="#/domains"><div class="l">Domain</div><div class="v">${fmt(c.domains)}</div></a>
+    <a class="kpi" href="#/stores"><div class="l">Cửa hàng</div><div class="v">${fmt(c.stores)}</div></a>
+    <a class="kpi" href="#/offers"><div class="l">Ưu đãi đang chạy</div><div class="v">${fmt(c.offers)}</div></a>
+    <a class="kpi" href="#/promo_events"><div class="l">Sự kiện đang diễn ra</div><div class="v">${fmt(c.events)}</div></a>
+    <a class="kpi" href="#/posts"><div class="l">Bài viết</div><div class="v">${fmt(c.posts)}</div></a>
+  </div>
+  <div class="alerts">
+    ${alert(h.down, 'domain đang không truy cập được', '#/domains')}
+    ${alert(h.ssl, 'chứng chỉ SSL sắp hết hạn (&lt; 14 ngày)', '#/domains')}
+    ${alert(h.expiring, 'domain sắp hết hạn (&lt; 30 ngày)', '#/domains')}
+    ${alert(h.notracking, 'domain không nhận dữ liệu 2 ngày qua', '#/domains')}
   </div>
   <div class="card"><div class="card-head"><h3>Theo ngày</h3></div><div class="table-wrap"><table>
     <thead><tr><th>Ngày</th><th style="width:40%"></th><th class="r">Lượt vào</th><th class="r">Tỉ lệ bấm</th><th class="r">Lượt bấm</th><th class="r">Copy mã</th></tr></thead>
@@ -181,9 +258,10 @@ VIEWS.dashboard = async () => {
   </div>
   ${!S.domain && d.byDomain.length > 1 ? `<div class="card" style="margin-top:16px"><div class="card-head"><h3>Theo domain</h3></div><div class="table-wrap"><table>
     <thead><tr><th>Domain</th><th class="r">Lượt vào</th><th class="r">Tỉ lệ bấm</th><th class="r">Lượt bấm</th><th class="r">Copy mã</th></tr></thead>
-    <tbody>${d.byDomain.map((r) => `<tr><td class="store-cell"><b>${esc(r.name)}</b><span class="sub">${esc(r.host)}</span></td><td class="r">${fmt(r.visits)}</td><td class="r">${rateBadge(r.visits ? r.clicked / r.visits : 0)}</td><td class="r">${fmt(r.clicks)}</td><td class="r">${fmt(r.copies)}</td></tr>`).join('')}</tbody></table></div></div>` : ''}`;
+    <tbody>${d.byDomain.map((r) => `<tr><td class="store-cell"><b><a class="link" style="color:inherit" href="javascript:void 0" data-scope="${r.id}">${esc(r.name)}</a></b><span class="sub">${esc(r.host)}</span></td><td class="r">${fmt(r.visits)}</td><td class="r">${rateBadge(r.visits ? r.clicked / r.visits : 0)}</td><td class="r">${fmt(r.clicks)}</td><td class="r">${fmt(r.copies)}</td></tr>`).join('')}</tbody></table></div></div>` : ''}`;
   bindFilters(VIEWS.dashboard);
   $$('[data-detail]', view).forEach((a) => (a.onclick = () => openDetail(+a.dataset.detail)));
+  $$('[data-scope]', view).forEach((a) => (a.onclick = () => { setScope(a.dataset.scope); render(); }));
 };
 
 /* ================= Hiệu quả cửa hàng ================= */
@@ -191,48 +269,51 @@ VIEWS.performance = async () => {
   const view = $('#view');
   view.innerHTML = (await filtersHTML()) + `<div class="card">
     <div class="card-head"><span class="sp"></span><div class="search">${icon('search')}<input type="text" id="q" placeholder="Tìm kiếm" value="${esc(S.q)}"></div>
-      <button class="icon-btn" id="fbtn" title="Bộ lọc">${FILTER_SVG}<span class="badge">${S.active ? 1 : ''}</span></button></div>
+      <div class="pop-wrap"><button class="icon-btn" id="fbtn" title="Bộ lọc">${FILTER_SVG}<span class="badge">${S.active ? 1 : ''}</span></button>
+        <div class="popover hidden" id="fpop"><b>Bộ lọc</b><label><input type="checkbox" id="fActive" ${S.active ? 'checked' : ''}> Chỉ store có lượt truy cập</label></div></div></div>
     <div id="applied"></div><div class="table-wrap" id="tbl"></div><div id="pg"></div></div>`;
   bindFilters(VIEWS.performance);
   $('#q').oninput = debounce((e) => { S.q = e.target.value; S.page = 1; save(); load(); });
-  $('#fbtn').onclick = () => { S.active = !S.active; S.page = 1; save(); $('#fbtn .badge').textContent = S.active ? 1 : ''; load(); };
+  $('#fbtn').onclick = (e) => { e.stopPropagation(); $('#fpop').classList.toggle('hidden'); };
+  $('#fpop').onclick = (e) => e.stopPropagation();
+  document.addEventListener('click', () => { const p = $('#fpop'); if (p) p.classList.add('hidden'); }, { once: true });
+  const setActive = (v) => { S.active = v; S.page = 1; save(); $('#fbtn .badge').textContent = v ? 1 : ''; $('#fActive').checked = v; load(); };
+  $('#fActive').onchange = (e) => setActive(e.target.checked);
   async function load() {
-    const d = await api('/stores?' + qs({ q: S.q, active: S.active ? 1 : 0, sort: S.sort, dir: S.dir, page: S.page, per: S.per }));
+    const d = await api('/performance?' + qs({ q: S.q, active: S.active ? 1 : 0, sort: S.sort, dir: S.dir, page: S.page, per: S.per }));
     if (d.rows.length === 0 && S.page > 1 && d.total) { S.page = 1; return load(); }
-    $('#applied').innerHTML = S.active ? `<div class="applied">Bộ lọc đang áp dụng <span class="chip">Chỉ store có lượt truy cập <button id="rmActive">×</button></span><span class="sp" style="flex:1"></span><button class="act" id="rmAll">×</button></div>` : '';
+    $('#applied').innerHTML = S.active ? `<div class="applied">Bộ lọc đang áp dụng <span class="chip">Chỉ store có lượt truy cập <button id="rmActive">×</button></span><span class="sp" style="flex:1"></span><button class="act" id="rmAll" title="Xoá bộ lọc">×</button></div>` : '';
     const showDomain = !S.domain && DOMAINS.length > 1;
     $('#tbl').innerHTML = `<table><thead><tr>
-      ${sortTh('Cửa hàng', 'name', S.sort, S.dir)}${showDomain ? sortTh('Domain', 'host', S.sort, S.dir) : ''}${sortTh('Lượt vào', 'visits', S.sort, S.dir)}${sortTh(S.channel === 'ads' || S.channel === 'all' ? 'Từ Ads' : 'Từ Ads', 'ads', S.sort, S.dir)}
+      ${sortTh('Cửa hàng', 'name', S.sort, S.dir)}${showDomain ? sortTh('Domain', 'host', S.sort, S.dir) : ''}${sortTh('Lượt vào', 'visits', S.sort, S.dir)}${sortTh('Từ Ads', 'ads', S.sort, S.dir)}
       ${sortTh('Tỉ lệ bấm', 'rate', S.sort, S.dir)}${sortTh('Lượt bấm', 'clicks', S.sort, S.dir)}${sortTh('Copy mã', 'copies', S.sort, S.dir)}
       ${sortTh('Quốc gia chính', 'country', S.sort, S.dir)}${sortTh('Ưu đãi đang chạy', 'offers', S.sort, S.dir)}<th></th></tr></thead><tbody>
       ${d.rows.map((r) => `<tr>
-        <td class="store-cell"><b>${esc(r.name || r.slug)}</b><span class="sub">${esc(r.url ? r.url.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '') : r.slug)}</span></td>
+        <td class="store-cell"><b>${esc(r.name || r.slug)}</b><span class="sub">${esc(r.url ? hostOfUrl(r.url) : r.slug)}</span></td>
         ${showDomain ? `<td class="sub">${esc(r.host)}</td>` : ''}
         <td>${fmt(r.visits)}</td><td>${fmt(r.ads)}<div class="sub">${pct(r.ads, r.visits)}%</div></td>
         <td>${rateBadge(r.rate)}</td><td>${fmt(r.clicks)}</td><td>${fmt(r.copies)}</td>
         <td>${r.country ? esc(countryName(r.country)) : '<span class="sub">—</span>'}</td><td><span class="pill-n">${r.offers}</span></td>
         <td class="acts"><button class="act" data-detail="${r.id}">${icon('search')} Chi tiết</button>
-          ${r.page_url ? `<a class="act" href="${esc(r.page_url)}" target="_blank" rel="noopener">${icon('open')} Mở trang</a>` : ''}</td></tr>`).join('')
+          <a class="act" href="${esc(r.open_url)}" target="_blank" rel="noopener">${icon('open')} Mở trang</a></td></tr>`).join('')
       || `<tr><td colspan="10" class="empty">${DOMAINS.length ? 'Không có cửa hàng nào trong khoảng thời gian / bộ lọc này' : 'Chưa có domain nào. <a href="#/domains">Thêm domain →</a>'}</td></tr>`}
       </tbody></table>`;
     $('#pg').innerHTML = pagerHTML(d.total, d.page, d.per);
-    $$('[data-sort]', view).forEach((th) => (th.onclick = () => { const k = th.dataset.sort; if (S.sort === k) S.dir = S.dir === 'desc' ? 'asc' : 'desc'; else { S.sort = k; S.dir = k === 'name' || k === 'country' || k === 'host' ? 'asc' : 'desc'; } S.page = 1; save(); load(); }));
+    $$('[data-sort]', view).forEach((th) => (th.onclick = () => { const k = th.dataset.sort; if (S.sort === k) S.dir = S.dir === 'desc' ? 'asc' : 'desc'; else { S.sort = k; S.dir = ['name', 'country', 'host'].includes(k) ? 'asc' : 'desc'; } S.page = 1; save(); load(); }));
     $$('[data-detail]', view).forEach((b) => (b.onclick = () => openDetail(+b.dataset.detail)));
-    $$('[data-page]', view).forEach((b) => (b.onclick = () => { S.page = +b.dataset.page; save(); load(); }));
-    $('[data-per]', view).onchange = (e) => { S.per = +e.target.value; S.page = 1; save(); load(); };
-    const rm = () => { S.active = false; S.page = 1; save(); $('#fbtn .badge').textContent = ''; load(); };
-    if ($('#rmActive')) { $('#rmActive').onclick = rm; $('#rmAll').onclick = rm; }
+    bindPager(view, (pg) => { S.page = pg; save(); load(); }, (n) => { S.per = n; S.page = 1; save(); load(); });
+    if ($('#rmActive')) { $('#rmActive').onclick = () => setActive(false); $('#rmAll').onclick = () => setActive(false); }
   }
   await load();
 };
 
-/* ================= Store detail modal ================= */
+/* ================= Chi tiết cửa hàng (modal) ================= */
 async function openDetail(id) {
   const F = { range: S.range, from: S.from, to: S.to, channel: S.channel, country: S.country };
   openModal(`<div class="m-head"><h2>Đang tải...</h2><button class="m-close" data-close>×</button></div><div class="m-body"></div>`);
   async function load() {
-    const d = await api(`/stores/${id}/detail?` + qs({ domain: '', range: F.range, from: F.from, to: F.to, channel: F.channel, country: F.country }));
-    const countries = await api('/countries?' + qs({ domain: d.store.domain_id, range: F.range, from: F.from, to: F.to })).catch(() => []);
+    const d = await api(`/performance/${id}?` + qs({ domain: '', group: '', range: F.range, from: F.from, to: F.to, channel: F.channel, country: F.country }));
+    const countries = await api('/countries?' + qs({ domain: d.store.domain_id, group: '', range: F.range, from: F.from, to: F.to })).catch(() => []);
     const k = d.kpi, s = d.store;
     const totalPosClicks = d.byPosition.reduce((a, r) => a + r.clicks, 0);
     const tr = (cells) => `<tr>${cells.join('')}</tr>`;
@@ -252,7 +333,7 @@ async function openDetail(id) {
       </div>
       <div class="sec-title">Theo vị trí bấm</div>
       <table><thead><tr><th>Vị trí</th><th class="r">Lượt vào có bấm</th><th class="r">Lượt bấm</th><th class="r">Copy mã</th><th class="r">Tỉ trọng lượt bấm</th></tr></thead><tbody>
-        ${d.byPosition.map((r) => tr([td(esc(r.position || '(không rõ)'), ''), td(fmt(r.clicked)), td('<b>' + fmt(r.clicks) + '</b>'), td(fmt(r.copies)), td(pct(r.clicks, totalPosClicks) + '%')])).join('') || empty(5)}</tbody></table>
+        ${d.byPosition.map((r) => tr([td(esc(r.position || ''), ''), td(fmt(r.clicked)), td('<b>' + fmt(r.clicks) + '</b>'), td(fmt(r.copies)), td(pct(r.clicks, totalPosClicks) + '%')])).join('') || empty(5)}</tbody></table>
       <div class="sec-title">Theo nguồn</div>
       <table><thead><tr><th>Kênh</th><th>Nguồn</th><th class="r">Lượt vào</th><th class="r">Vào thẳng</th><th class="r">Tỉ lệ bấm</th><th class="r">Lượt bấm</th><th class="r">Copy mã</th></tr></thead><tbody>
         ${d.bySource.map((r) => tr([td(`<span class="tag ${r.channel}">${CH_LABEL[r.channel] || r.channel}</span>`, ''), td(esc(r.source), ''), td('<b>' + fmt(r.visits) + '</b>'), td(fmt(r.entries)), td(pct(r.clicked, r.visits) + '%'), td(fmt(r.clicks)), td(fmt(r.copies))])).join('') || empty(7)}</tbody></table>
@@ -272,11 +353,14 @@ async function openDetail(id) {
       <table><thead><tr><th>Ngày</th><th class="r">Lượt vào</th><th class="r">Tỉ lệ bấm</th><th class="r">Lượt bấm</th><th class="r">Copy mã</th></tr></thead><tbody>
         ${d.byDay.map((r) => tr([td(fmtDay(r.day), ''), td('<b>' + fmt(r.visits) + '</b>'), td(r.visits ? pct(r.clicked, r.visits) + '%' : '—'), td(fmt(r.clicks)), td(fmt(r.copies))])).join('')}</tbody></table>
     </div>
-    <div class="m-foot"><button class="btn" data-close>Đóng</button><span style="flex:1"></span>${s.page_url ? `<a class="btn" href="${esc(s.page_url)}" target="_blank" rel="noopener">Mở trang</a>` : ''}</div>`;
+    <div class="m-foot"><button class="btn" data-close>Đóng</button><span style="flex:1"></span><a class="btn" href="${esc(s.open_url)}" target="_blank" rel="noopener">Mở trang</a></div>`;
     $('#dRange').onchange = (e) => { F.range = e.target.value; load(); };
     $('#dCountry').onchange = (e) => { F.country = e.target.value; load(); };
     $$('[data-ch]').forEach((b) => (b.onclick = () => { F.channel = b.dataset.ch; load(); }));
-    $('#allKw').onclick = () => { S.kstore = id; S.kpage = 1; S.domain = s.domain_id; S.range = F.range; S.channel = F.channel; S.country = F.country; save(); $('#domainSel').value = s.domain_id; closeModal(); location.hash = '#/keywords'; render(); };
+    $('#allKw').onclick = () => {
+      setScope(s.domain_id); S.kstore = id; S.kpage = 1; S.range = F.range; S.channel = F.channel; S.country = F.country; save();
+      closeModal(); if (curView() === 'keywords') render(); else location.hash = '#/keywords';
+    };
   }
   try { await load(); } catch (e) { toast(e.message, 1); closeModal(); }
 }
@@ -284,8 +368,8 @@ async function openDetail(id) {
 /* ================= Từ khoá ================= */
 VIEWS.keywords = async () => {
   const view = $('#view');
-  const [fh, d, stores] = await Promise.all([filtersHTML(), api('/keywords?' + qs({ store: S.kstore || '' })), api('/stores?' + qs({ active: 1, per: 500, sort: 'name', dir: 'asc' }))]);
-  view.innerHTML = `<h1 class="page">Từ khoá <span class="sub">${fmtRange(d.from, d.to)}</span></h1>${fh}
+  const [fh, d, stores] = await Promise.all([filtersHTML(), api('/keywords?' + qs({ store: S.kstore || '' })), api('/performance?' + qs({ active: 1, per: 500, sort: 'name', dir: 'asc' }))]);
+  view.innerHTML = `<div class="page-head"><h1>Từ khoá</h1><span class="sub">${fmtRange(d.from, d.to)}</span></div>${fh}
   <div class="card"><div class="card-head"><select id="kStore" style="max-width:260px"><option value="0">Tất cả cửa hàng</option>${stores.rows.map((s) => `<option value="${s.id}" ${s.id === S.kstore ? 'selected' : ''}>${esc(s.name || s.slug)}${!S.domain ? ' – ' + esc(s.host) : ''}</option>`).join('')}</select>
     <span class="sp"></span><div class="search">${icon('search')}<input type="text" id="kq" placeholder="Tìm từ khoá" value="${esc(S.kq)}"></div>
     <button class="btn sm" id="kCsv">Xuất CSV</button></div><div class="table-wrap" id="ktbl"></div><div id="kpg"></div></div>`;
@@ -300,16 +384,11 @@ VIEWS.keywords = async () => {
     const per = S.per, pages = Math.max(1, Math.ceil(rows.length / per)); if (S.kpage > pages) S.kpage = 1;
     const pageRows = rows.slice((S.kpage - 1) * per, S.kpage * per);
     $('#ktbl').innerHTML = `<table><thead><tr>${sortTh('Từ khoá', 'keyword', k, S.kdir)}${sortTh('Cửa hàng', 'store_name', k, S.kdir)}${sortTh('Chiến dịch', 'campaign', k, S.kdir)}${sortTh('Lượt vào', 'visits', k, S.kdir, 'r')}${sortTh('Tỉ lệ bấm', 'rate', k, S.kdir, 'r')}${sortTh('Lượt bấm', 'clicks', k, S.kdir, 'r')}${sortTh('Copy mã', 'copies', k, S.kdir, 'r')}</tr></thead><tbody>
-      ${pageRows.map((r) => `<tr><td>${esc(r.keyword)}</td><td class="store-cell"><b>${esc(r.store_name || r.slug)}</b>${!S.domain ? `<span class="sub">${esc(r.host)}</span>` : ''}</td><td class="sub">${esc(r.campaign || '—')}</td><td class="r"><b>${fmt(r.visits)}</b></td><td class="r">${rateBadge(r.rate)}</td><td class="r">${fmt(r.clicks)}</td><td class="r">${fmt(r.copies)}</td></tr>`).join('') || '<tr><td colspan="7" class="empty">Chưa có từ khoá. Từ khoá được lấy từ tham số <code>utm_term</code> trên link quảng cáo.</td></tr>'}</tbody></table>`;
+      ${pageRows.map((r) => `<tr><td>${esc(r.keyword)}</td><td class="store-cell"><b>${esc(r.store_name || r.slug || '(trang khác)')}</b>${!S.domain ? `<span class="sub">${esc(r.host)}</span>` : ''}</td><td class="sub">${esc(r.campaign || '—')}</td><td class="r"><b>${fmt(r.visits)}</b></td><td class="r">${rateBadge(r.rate)}</td><td class="r">${fmt(r.clicks)}</td><td class="r">${fmt(r.copies)}</td></tr>`).join('') || '<tr><td colspan="7" class="empty">Chưa có từ khoá. Từ khoá được lấy từ tham số <code>utm_term</code> trên link quảng cáo.</td></tr>'}</tbody></table>`;
     $('#kpg').innerHTML = pagerHTML(rows.length, S.kpage, per, 'từ khoá');
     $$('[data-sort]', view).forEach((th) => (th.onclick = () => { const key = th.dataset.sort; if (S.ksort === key) S.kdir = S.kdir === 'desc' ? 'asc' : 'desc'; else { S.ksort = key; S.kdir = ['keyword', 'store_name', 'campaign'].includes(key) ? 'asc' : 'desc'; } save(); draw(); }));
-    $$('[data-page]', view).forEach((b) => (b.onclick = () => { S.kpage = +b.dataset.page; save(); draw(); }));
-    $('[data-per]', view).onchange = (e) => { S.per = +e.target.value; S.kpage = 1; save(); draw(); };
-    $('#kCsv').onclick = () => {
-      const lines = [['Từ khoá', 'Cửa hàng', 'Domain', 'Chiến dịch', 'Lượt vào', 'Tỉ lệ bấm (%)', 'Lượt bấm', 'Copy mã']].concat(rows.map((r) => [r.keyword, r.store_name, r.host, r.campaign, r.visits, Math.round(r.rate * 100), r.clicks, r.copies]));
-      const csv = '﻿' + lines.map((l) => l.map((c) => '"' + String(c ?? '').replace(/"/g, '""') + '"').join(',')).join('\n');
-      const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); a.download = `tu-khoa_${d.from}_${d.to}.csv`; a.click();
-    };
+    bindPager(view, (pg) => { S.kpage = pg; save(); draw(); }, (n) => { S.per = n; S.kpage = 1; save(); draw(); });
+    $('#kCsv').onclick = () => downloadCSV(`tu-khoa_${d.from}_${d.to}.csv`, [['Từ khoá', 'Cửa hàng', 'Domain', 'Chiến dịch', 'Lượt vào', 'Tỉ lệ bấm (%)', 'Lượt bấm', 'Copy mã']].concat(rows.map((r) => [r.keyword, r.store_name, r.host, r.campaign, r.visits, Math.round(r.rate * 100), r.clicks, r.copies])));
   };
   $('#kq').oninput = debounce((e) => { S.kq = e.target.value; S.kpage = 1; save(); draw(); }, 200);
   draw();
@@ -317,52 +396,89 @@ VIEWS.keywords = async () => {
 
 /* ================= Domain ================= */
 function snippet(d) { return `<script async src="${location.origin}/t.js" data-site="${d.site_key}"></script>`; }
+function healthCells(d) {
+  const http = !d.http_checked ? '<span class="status"><span class="dot"></span>Chưa kiểm tra</span>'
+    : d.http_status >= 200 && d.http_status < 400 ? `<span class="status"><span class="dot on"></span>Online · ${fmt(d.http_ms)}ms</span>`
+      : `<span class="status" title="${esc(d.http_error)}"><span class="dot" style="background:var(--red)"></span>${d.http_status ? 'Lỗi ' + d.http_status : 'Không truy cập được'}</span>`;
+  const sslLeft = d.ssl_expires ? daysLeft(d.ssl_expires) : null;
+  const ssl = d.ssl_expires ? `<span class="badge-s ${sslLeft < 14 ? 'r' : sslLeft < 30 ? 'o' : 'g'}">${sslLeft < 0 ? 'Đã hết hạn' : 'Còn ' + sslLeft + ' ngày'}</span><div class="sub">${fmtDate(d.ssl_expires)}${d.ssl_issuer ? ' · ' + esc(d.ssl_issuer) : ''}${d.ssl_valid === 0 ? ' · <b style="color:var(--red)">không hợp lệ</b>' : ''}</div>`
+    : `<span class="sub">${d.ssl_checked ? 'Không có SSL' : '—'}</span>`;
+  const regLeft = d.reg_expires ? daysLeft(d.reg_expires) : null;
+  const reg = d.reg_expires ? `<span class="badge-s ${regLeft < 30 ? 'r' : regLeft < 60 ? 'o' : 'g'}">${regLeft < 0 ? 'Đã hết hạn' : 'Còn ' + regLeft + ' ngày'}</span><div class="sub">${fmtDate(d.reg_expires)}${d.registrar ? ' · ' + esc(d.registrar) : ''}</div>`
+    : `<span class="sub">${d.reg_checked ? 'Không tra được' : '—'}</span>`;
+  const recent = d.last_hit && Date.now() - d.last_hit < 864e5 * 2;
+  const track = !d.active ? '<span class="status"><span class="dot"></span>Tạm dừng</span>' : d.last_hit ? `<span class="status"><span class="dot ${recent ? 'on' : 'warn'}"></span>${recent ? 'Đang nhận dữ liệu' : 'Không có dữ liệu mới'}</span><div class="sub">${fmtTime(d.last_hit)}</div>` : '<span class="status"><span class="dot warn"></span>Chờ cài mã</span>';
+  return { http, ssl, reg, track };
+}
 VIEWS.domains = async () => {
   const view = $('#view');
   await loadDomains();
-  view.innerHTML = `<h1 class="page">Domain</h1>
+  const R = S.res.domains || (S.res.domains = { q: '', g: '' });
+  view.innerHTML = `<div class="page-head"><h1>Domain</h1><span class="sub">${fmt(DOMAINS.length)} domain</span><span class="sp"></span>
+    ${isAdmin() ? `<button class="btn" id="bulkDom">${icon('upload')} Nhập nhiều domain</button>` : ''}</div>
   ${isAdmin() ? `<div class="card"><div class="card-head"><h3>Thêm domain mới</h3></div>
     <form id="addDom" class="m-body form"><div class="row">
-      <label>Domain<input name="host" placeholder="vd: magiamgia.com" required></label>
-      <label>Tên hiển thị<input name="name" placeholder="vd: Site Coupon UK"></label>
-      <button class="btn primary">+ Thêm domain</button></div></form></div>` : ''}
-  <div class="card"><div class="table-wrap"><table><thead><tr><th>Tên</th><th>Domain</th><th>Trạng thái</th><th class="r">Cửa hàng</th><th class="r">Lượt vào 7 ngày</th><th>Dữ liệu gần nhất</th><th></th></tr></thead><tbody>
-  ${DOMAINS.map((d) => {
-    const recent = d.last_hit && Date.now() - d.last_hit < 864e5 * 2;
-    const st = !d.active ? '<span class="status"><span class="dot"></span>Tạm dừng</span>' : d.last_hit ? `<span class="status"><span class="dot ${recent ? 'on' : 'warn'}"></span>${recent ? 'Đang nhận dữ liệu' : 'Không có dữ liệu mới'}</span>` : '<span class="status"><span class="dot warn"></span>Chờ cài mã</span>';
-    return `<tr><td><b>${esc(d.name)}</b></td><td><a href="https://${esc(d.host)}" target="_blank" rel="noopener">${esc(d.host)}</a></td><td>${st}</td><td class="r">${fmt(d.stores)}</td><td class="r">${fmt(d.visits7)}</td><td class="sub">${fmtTime(d.last_hit)}</td>
-      <td class="acts"><button class="act" data-snip="${d.id}">${icon('code')} Mã nhúng</button>${isAdmin() ? `<button class="act" data-edit="${d.id}">${icon('edit')} Sửa</button><button class="act danger" data-del="${d.id}">${icon('trash')} Xoá</button>` : ''}</td></tr>`;
-  }).join('') || '<tr><td colspan="7" class="empty">Chưa có domain nào</td></tr>'}</tbody></table></div></div>`;
+      <label>Domain<input name="host" placeholder="vd: example.com" required></label>
+      <label>Tên hiển thị<input name="name" placeholder="vd: Site UK"></label>
+      <label>Nhóm<input name="category" list="grpList" placeholder="vd: UK, US..."></label>
+      <label>Đường dẫn trang cửa hàng<input name="store_path" placeholder="/store/{slug}"></label>
+      <button class="btn primary">+ Thêm domain</button></div></form>
+    <datalist id="grpList">${GROUPS.map((g) => `<option value="${esc(g.category)}">`).join('')}</datalist></div>` : ''}
+  <div class="card"><div class="card-head"><select id="dGrp" style="max-width:200px"><option value="">Tất cả nhóm</option>${GROUPS.map((g) => `<option value="${esc(g.category)}" ${R.g === g.category ? 'selected' : ''}>${esc(g.category)} (${g.n})</option>`).join('')}</select>
+    <span class="sp"></span><div class="search">${icon('search')}<input type="text" id="dq" placeholder="Tìm domain" value="${esc(R.q)}"></div>
+    <button class="btn sm" id="dCsv">Xuất CSV</button></div>
+  <div class="table-wrap"><table><thead><tr><th>Domain</th><th>Nhóm</th><th>Online</th><th>SSL</th><th>Hết hạn domain</th><th>Theo dõi</th><th class="r">Cửa hàng</th><th class="r">Lượt vào 7 ngày</th><th></th></tr></thead><tbody id="dbody"></tbody></table></div></div>`;
+  const list = () => DOMAINS.filter((d) => (!R.g || d.category === R.g) && (!R.q || (d.name + ' ' + d.host + ' ' + d.note).toLowerCase().includes(R.q.toLowerCase())));
+  const draw = () => {
+    $('#dbody').innerHTML = list().map((d) => {
+      const h = healthCells(d);
+      return `<tr><td class="store-cell"><b>${esc(d.name)}</b><a class="sub" href="https://${esc(d.host)}" target="_blank" rel="noopener">${esc(d.host)}</a></td>
+      <td>${d.category ? `<span class="badge-s b">${esc(d.category)}</span>` : '<span class="sub">—</span>'}</td>
+      <td>${h.http}</td><td>${h.ssl}</td><td>${h.reg}</td><td>${h.track}</td><td class="r">${fmt(d.stores)}</td><td class="r">${fmt(d.visits7)}</td>
+      <td class="acts"><button class="act" data-snip="${d.id}">${icon('code')} Mã nhúng</button><button class="act" data-check="${d.id}">${icon('refresh')} Kiểm tra</button>${isAdmin() ? `<button class="act" data-edit="${d.id}">${icon('edit')} Sửa</button><button class="act danger" data-del="${d.id}">${icon('trash')} Xoá</button>` : ''}</td></tr>`;
+    }).join('') || `<tr><td colspan="9" class="empty">${DOMAINS.length ? 'Không có domain phù hợp' : 'Chưa có domain nào'}</td></tr>`;
+    $$('[data-snip]', view).forEach((b) => (b.onclick = () => showSnippet(DOMAINS.find((x) => x.id === +b.dataset.snip))));
+    $$('[data-check]', view).forEach((b) => (b.onclick = async () => {
+      b.disabled = true; b.innerHTML = icon('refresh') + ' Đang kiểm tra...';
+      try { await api(`/domains/${b.dataset.check}/check`, { method: 'POST' }); toast('Đã kiểm tra xong'); await VIEWS.domains(); } catch (er) { toast(er.message, 1); b.disabled = false; }
+    }));
+    $$('[data-edit]', view).forEach((b) => (b.onclick = () => editDomain(DOMAINS.find((x) => x.id === +b.dataset.edit))));
+    $$('[data-del]', view).forEach((b) => (b.onclick = () => deleteDomain(DOMAINS.find((x) => x.id === +b.dataset.del))));
+  };
+  $('#dq').oninput = debounce((e) => { R.q = e.target.value; save(); draw(); }, 150);
+  $('#dGrp').onchange = (e) => { R.g = e.target.value; save(); draw(); };
+  $('#dCsv').onclick = () => downloadCSV('domain.csv', [['Tên', 'Domain', 'Nhóm', 'HTTP', 'SSL hết hạn', 'Domain hết hạn', 'Nhà đăng ký', 'Cửa hàng', 'Lượt vào 7 ngày', 'Ghi chú']]
+    .concat(list().map((d) => [d.name, d.host, d.category, d.http_status || '', d.ssl_expires ? fmtDate(d.ssl_expires) : '', d.reg_expires ? fmtDate(d.reg_expires) : '', d.registrar, d.stores, d.visits7, d.note])));
   const f = $('#addDom');
   if (f) f.onsubmit = async (e) => {
     e.preventDefault();
     try { const d = await api('/domains', { method: 'POST', body: Object.fromEntries(new FormData(f)) }); toast('Đã thêm domain'); await VIEWS.domains(); showSnippet(d); }
     catch (er) { toast(er.message, 1); }
   };
-  $$('[data-snip]', view).forEach((b) => (b.onclick = () => showSnippet(DOMAINS.find((x) => x.id === +b.dataset.snip))));
-  $$('[data-edit]', view).forEach((b) => (b.onclick = () => editDomain(DOMAINS.find((x) => x.id === +b.dataset.edit))));
-  $$('[data-del]', view).forEach((b) => (b.onclick = () => {
-    const d = DOMAINS.find((x) => x.id === +b.dataset.del);
-    openModal(`<div class="m-head"><h2>Xoá domain</h2><button class="m-close" data-close>×</button></div>
-      <div class="m-body">Xoá <b>${esc(d.host)}</b> sẽ xoá <b>toàn bộ</b> cửa hàng và dữ liệu thống kê của domain này. Không thể hoàn tác.<br><br>Gõ <code>${esc(d.host)}</code> để xác nhận:<br><input id="delConfirm" style="width:100%;margin-top:8px"></div>
-      <div class="m-foot"><button class="btn" data-close>Huỷ</button><span style="flex:1"></span><button class="btn danger" id="delGo">Xoá vĩnh viễn</button></div>`, 'sm');
-    $('#delGo').onclick = async () => {
-      if ($('#delConfirm').value.trim() !== d.host) return toast('Tên domain không khớp', 1);
-      try { await api('/domains/' + d.id, { method: 'DELETE' }); closeModal(); toast('Đã xoá'); VIEWS.domains(); } catch (er) { toast(er.message, 1); }
-    };
-  }));
+  if ($('#bulkDom')) $('#bulkDom').onclick = () => openImport('domains');
+  draw();
 };
+async function deleteDomain(d) {
+  openModal(`<div class="m-head"><h2>Xoá domain</h2><button class="m-close" data-close>×</button></div>
+    <div class="m-body">Xoá <b>${esc(d.host)}</b> sẽ xoá <b>toàn bộ</b> cửa hàng, ưu đãi, nội dung và dữ liệu thống kê của domain này. Không thể hoàn tác.<br><br>Gõ <code>${esc(d.host)}</code> để xác nhận:<br><input id="delConfirm" style="width:100%;margin-top:8px"></div>
+    <div class="m-foot"><button class="btn" data-close>Huỷ</button><span style="flex:1"></span><button class="btn danger" id="delGo">Xoá vĩnh viễn</button></div>`, 'sm');
+  $('#delGo').onclick = async () => {
+    if ($('#delConfirm').value.trim() !== d.host) return toast('Tên domain không khớp', 1);
+    try { await api('/domains/' + d.id, { method: 'DELETE' }); closeModal(); toast('Đã xoá'); VIEWS.domains(); } catch (er) { toast(er.message, 1); }
+  };
+}
 function showSnippet(d) {
   const code = snippet(d);
+  const base = `${location.origin}/api/public/${d.site_key}`;
   openModal(`<div class="m-head"><h2>Mã nhúng · ${esc(d.host)}</h2><button class="m-close" data-close>×</button></div>
   <div class="m-body guide">
     <p><b>Bước 1.</b> Dán đoạn mã sau vào trước thẻ <code>&lt;/head&gt;</code> trên <b>mọi trang</b> của ${esc(d.host)} (hoặc trong theme/header chung):</p>
-    <pre class="code" id="snipCode">${esc(code)}</pre><button class="btn sm" id="cpSnip">Sao chép mã</button>
+    <pre class="code">${esc(code)}</pre><button class="btn sm" id="cpSnip">${icon('copy')} Sao chép mã</button>
     <p style="margin-top:16px"><b>Bước 2.</b> Gắn thuộc tính để hệ thống nhận diện cửa hàng và ưu đãi (khuyến nghị):</p>
     <pre class="code">${esc(`<!-- Trang cửa hàng: đặt ở thẻ bao ngoài (body/main) -->
 <main data-cp-store="insta360" data-cp-store-name="Insta360" data-cp-store-url="https://insta360.com">
 
-  <!-- Mỗi ưu đãi / mã giảm giá -->
+  <!-- Mỗi ưu đãi / mã giảm giá (id trùng "Mã theo dõi" trong mục Mã & ưu đãi) -->
   <div data-cp-offer="insta360-5off" data-cp-type="code" data-cp-title="Insta360 Coupon: 5% OFF with Code">
     <button>Lấy mã</button>   <!-- click tự được ghi nhận -->
   </div>
@@ -370,94 +486,350 @@ function showSnippet(d) {
   <!-- Nút khác cần đếm lượt bấm (tuỳ chọn vị trí) -->
   <a href="..." data-cp-click data-cp-pos="Nút trên trang">Đến cửa hàng</a>
 </main>`)}</pre>
-    <p>Nếu không gắn <code>data-cp-store</code>, hệ thống tự lấy tên cửa hàng từ URL theo mẫu: <code>${esc(d.store_pattern || '/store/{tên}, /coupons/{tên}, /cua-hang/{tên}...')}</code> (đổi trong mục <b>Sửa</b>).</p>
-    <p><b>Copy mã</b> được ghi nhận tự động khi trang dùng <code>navigator.clipboard</code>, <code>execCommand('copy')</code> hoặc người dùng tự bôi đen + Ctrl+C. Có thể gọi thủ công: <code>CPTrack.copy('offer-id')</code>.</p>
-    <p><b>Từ khoá & kênh Ads:</b> thêm vào link quảng cáo Google Ads (Final URL suffix): <code>utm_source=google&amp;utm_medium=cpc&amp;utm_campaign={campaignid}&amp;utm_term={keyword}</code>. Link có <code>gad_source</code>/<code>gclid</code> tự được tính là Quảng cáo.</p>
+    <p>Nếu không gắn <code>data-cp-store</code>, hệ thống tự lấy cửa hàng từ URL theo mẫu <code>${esc(d.store_path || '/store/{slug}')}</code> (đổi trong mục <b>Sửa</b>).</p>
+    <p><b>Copy mã</b> được ghi nhận tự động khi trang dùng <code>navigator.clipboard</code>, <code>execCommand('copy')</code> hoặc người dùng tự bôi đen + Ctrl+C. Gọi thủ công: <code>CPTrack.copy('offer-id')</code>.</p>
+    <p><b>Từ khoá & kênh Ads:</b> thêm vào Google Ads → Hậu tố URL cuối cùng: <code>utm_source=google&amp;utm_medium=cpc&amp;utm_campaign={campaignid}&amp;utm_term={keyword}</code>. Link có <code>gad_source</code>/<code>gclid</code> tự được tính là Quảng cáo.</p>
+    <p style="margin-top:16px"><b>API nội dung công khai</b> (website đọc dữ liệu đã xuất bản, dạng JSON):</p>
+    <pre class="code">${esc([`${base}/stores`, `${base}/stores/{slug}`, `${base}/offers?store={slug}`, `${base}/categories`, `${base}/events`, `${base}/events/{slug}`, `${base}/pages/{slug}`, `${base}/posts`, `${base}/posts/{slug}`, `${base}/faqs?store={slug}`].join('\n'))}</pre>
   </div><div class="m-foot"><button class="btn" data-close>Đóng</button></div>`);
   $('#cpSnip').onclick = () => copyText(code);
 }
 function editDomain(d) {
   openModal(`<div class="m-head"><h2>Sửa domain</h2><button class="m-close" data-close>×</button></div>
-  <form class="m-body form" id="edDom">
+  <form class="m-body form" id="edDom"><div class="fgrid">
     <label>Tên hiển thị<input name="name" value="${esc(d.name)}"></label>
     <label>Domain<input name="host" value="${esc(d.host)}"></label>
-    <label>Mẫu URL trang cửa hàng (regex, nhóm 1 = tên cửa hàng) <span class="hint">Để trống = mặc định. Vd: <code>^/coupons/([^/]+)</code> hoặc <code>^/([^/]+)-coupon</code></span>
-      <input name="store_pattern" value="${esc(d.store_pattern)}" placeholder="^/(?:store|coupons?|cua-hang)/([^/?#]+)"></label>
-    <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" name="active" ${d.active ? 'checked' : ''} style="height:auto"> Đang hoạt động (nhận dữ liệu)</label>
-    <label>Site key <span class="hint">Dùng trong mã nhúng, không đổi được</span><input value="${esc(d.site_key)}" readonly></label>
-    <button class="btn primary">Lưu</button></form>`, 'sm');
+    <label>Nhóm<input name="category" list="grpList2" value="${esc(d.category)}"><datalist id="grpList2">${GROUPS.map((g) => `<option value="${esc(g.category)}">`).join('')}</datalist></label>
+    <label>Đường dẫn trang cửa hàng <span class="hint">Phải chứa <code>{slug}</code>, vd <code>/coupons/{slug}</code></span><input name="store_path" value="${esc(d.store_path)}" placeholder="/store/{slug}"></label>
+    <label class="full">Ghi chú<textarea name="note" rows="3">${esc(d.note)}</textarea></label>
+    <label class="chk full"><input type="checkbox" name="active" ${d.active ? 'checked' : ''}> Đang hoạt động (nhận dữ liệu, theo dõi uptime)</label>
+    <label class="full">Site key <span class="hint">Dùng trong mã nhúng và API công khai</span><div class="row"><input value="${esc(d.site_key)}" readonly><button type="button" class="btn" id="rotKey">Đổi key</button></div></label>
+  </div><button class="btn primary">Lưu</button></form>`, 'sm');
   $('#edDom').onsubmit = async (e) => {
     e.preventDefault(); const f = new FormData(e.target);
-    try { await api('/domains/' + d.id, { method: 'PUT', body: { name: f.get('name'), host: f.get('host'), store_pattern: f.get('store_pattern'), active: f.get('active') === 'on' } }); closeModal(); toast('Đã lưu'); VIEWS.domains(); }
+    try { await api('/domains/' + d.id, { method: 'PUT', body: { name: f.get('name'), host: f.get('host'), category: f.get('category'), store_path: f.get('store_path'), note: f.get('note'), active: f.get('active') === 'on' } }); closeModal(); toast('Đã lưu'); VIEWS.domains(); }
     catch (er) { toast(er.message, 1); }
+  };
+  $('#rotKey').onclick = async () => {
+    if (!(await confirmBox('Đổi site key', `Sau khi đổi, mã nhúng và API cũ của <b>${esc(d.host)}</b> sẽ ngừng hoạt động. Bạn phải dán lại mã nhúng mới.`, 'Đổi key'))) return;
+    try { await api(`/domains/${d.id}/rotate-key`, { method: 'POST' }); toast('Đã đổi site key'); await VIEWS.domains(); showSnippet(DOMAINS.find((x) => x.id === d.id)); } catch (er) { toast(er.message, 1); }
   };
 }
 
-/* ================= Cửa hàng (quản lý) ================= */
-VIEWS.stores = async () => {
-  const view = $('#view');
-  const d = await api('/stores?' + qs({ range: '30d', channel: 'all', country: '', active: 0, per: 500, sort: 'name', dir: 'asc' }));
-  view.innerHTML = `<h1 class="page">Cửa hàng <span class="sub">${fmt(d.total)} cửa hàng · tự động thêm khi có lượt truy cập</span></h1>
-  <div class="card"><div class="card-head"><span class="sp"></span><div class="search">${icon('search')}<input type="text" id="sq" placeholder="Tìm cửa hàng"></div></div>
-  <div class="table-wrap"><table><thead><tr><th>Cửa hàng</th><th>Slug</th><th>Domain</th><th>Website cửa hàng</th><th class="r">Lượt vào 30 ngày</th><th></th></tr></thead><tbody id="sbody"></tbody></table></div></div>`;
-  const draw = (q = '') => {
-    const rows = d.rows.filter((r) => !q || (r.name + ' ' + r.slug + ' ' + r.url).toLowerCase().includes(q.toLowerCase()));
-    $('#sbody').innerHTML = rows.map((r) => `<tr><td><b>${esc(r.name)}</b></td><td class="sub">${esc(r.slug)}</td><td class="sub">${esc(r.host)}</td><td>${r.url ? esc(r.url) : '<span class="sub">—</span>'}</td><td class="r">${fmt(r.visits)}</td>
-      <td class="acts">${r.page_url ? `<a class="act" href="${esc(r.page_url)}" target="_blank" rel="noopener">${icon('open')} Mở trang</a>` : ''}${isAdmin() ? `<button class="act" data-sedit="${r.id}">${icon('edit')} Sửa</button><button class="act danger" data-sdel="${r.id}">${icon('trash')} Xoá</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">Chưa có cửa hàng nào. Cửa hàng sẽ tự xuất hiện khi trang có mã nhúng được truy cập.</td></tr>';
-    $$('[data-sedit]').forEach((b) => (b.onclick = () => {
-      const s = d.rows.find((x) => x.id === +b.dataset.sedit);
-      openModal(`<div class="m-head"><h2>Sửa cửa hàng</h2><button class="m-close" data-close>×</button></div>
-        <form class="m-body form" id="sForm"><label>Tên cửa hàng<input name="name" value="${esc(s.name)}"></label><label>Website cửa hàng<input name="url" value="${esc(s.url)}" placeholder="https://insta360.com"></label><button class="btn primary">Lưu</button></form>`, 'sm');
-      $('#sForm').onsubmit = async (e) => { e.preventDefault(); try { await api('/stores/' + s.id, { method: 'PUT', body: Object.fromEntries(new FormData(e.target)) }); closeModal(); toast('Đã lưu'); VIEWS.stores(); } catch (er) { toast(er.message, 1); } };
-    }));
-    $$('[data-sdel]').forEach((b) => (b.onclick = () => {
-      const s = d.rows.find((x) => x.id === +b.dataset.sdel);
-      openModal(`<div class="m-head"><h2>Xoá cửa hàng</h2><button class="m-close" data-close>×</button></div><div class="m-body">Xoá <b>${esc(s.name)}</b> và toàn bộ dữ liệu thống kê của cửa hàng này?</div>
-        <div class="m-foot"><button class="btn" data-close>Huỷ</button><span style="flex:1"></span><button class="btn danger" id="sDelGo">Xoá</button></div>`, 'sm');
-      $('#sDelGo').onclick = async () => { try { await api('/stores/' + s.id, { method: 'DELETE' }); closeModal(); toast('Đã xoá'); VIEWS.stores(); } catch (er) { toast(er.message, 1); } };
-    }));
-  };
-  $('#sq').oninput = debounce((e) => draw(e.target.value), 150);
-  draw();
+/* ================= Import ================= */
+const IMPORT_HELP = {
+  stores: { cols: 'name, slug, url, category, logo, description, status', sample: [['name', 'slug', 'url', 'category', 'logo', 'description', 'status'], ['Insta360', 'insta360', 'https://insta360.com', 'Điện tử', '', 'Camera 360 độ', 'active']] },
+  offers: { cols: 'store, title, type, code, discount, url, starts, expires, event, description, okey', sample: [['store', 'title', 'type', 'code', 'discount', 'url', 'starts', 'expires', 'event', 'description', 'okey'], ['Insta360', 'Insta360 Coupon: 5% OFF with Code', 'code', 'SAVE5', '5%', 'https://insta360.com', '2026-11-01', '2026-12-31', 'Black Friday', '', 'insta360-5off']] },
 };
+function openImport(kind, after) {
+  const isDom = kind === 'domains';
+  const dom = curDomain();
+  if (!isDom && !dom) return toast('Hãy chọn một domain trước khi import', 1);
+  const h = IMPORT_HELP[kind];
+  openModal(`<div class="m-head"><h2>Import ${IMPORT_KIND[kind]}${dom && !isDom ? ' · ' + esc(dom.host) : ''}</h2><button class="m-close" data-close>×</button></div>
+  <div class="m-body form">
+    ${isDom ? `<p class="sub" style="margin:0">Mỗi dòng một domain (hoặc cách nhau bởi dấu phẩy / khoảng trắng). Domain đã tồn tại sẽ được bỏ qua.</p>
+      <label>Nhóm cho các domain mới (tuỳ chọn)<input id="impGroup" list="grpList3"><datalist id="grpList3">${GROUPS.map((g) => `<option value="${esc(g.category)}">`).join('')}</datalist></label>`
+      : `<p class="sub" style="margin:0">File CSV (UTF-8, phân cách bằng dấu phẩy, chấm phẩy hoặc tab) có dòng tiêu đề. Các cột hỗ trợ: <code>${h.cols}</code>. Tên cột tiếng Việt (Tên, Cửa hàng, Mã, Hết hạn...) cũng được. Dòng trùng sẽ được cập nhật. Ngày dạng <code>YYYY-MM-DD</code> hoặc <code>DD/MM/YYYY</code>.</p>
+      <div><button type="button" class="btn sm" id="impSample">Tải file mẫu</button></div>`}
+    <div class="drop" id="impDrop">Kéo thả file vào đây hoặc <label class="link" style="display:inline;font-weight:500">chọn file<input type="file" id="impFile" accept=".csv,.txt,text/csv,text/plain" hidden></label><div id="impName" class="sub"></div></div>
+    <label>Hoặc dán nội dung<textarea id="impText" rows="8" placeholder="${isDom ? 'example.com\nexample.co.uk' : h.cols}"></textarea></label>
+    <div id="impResult"></div>
+  </div>
+  <div class="m-foot"><button class="btn" data-close>Đóng</button><span style="flex:1"></span><button class="btn primary" id="impGo">Bắt đầu import</button></div>`);
+  let filename = '';
+  const readFile = (file) => { if (!file) return; filename = file.name; $('#impName').textContent = file.name; const r = new FileReader(); r.onload = () => ($('#impText').value = r.result); r.readAsText(file, 'utf-8'); };
+  $('#impFile').onchange = (e) => readFile(e.target.files[0]);
+  const drop = $('#impDrop');
+  drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('on'); };
+  drop.ondragleave = () => drop.classList.remove('on');
+  drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('on'); readFile(e.dataTransfer.files[0]); };
+  if ($('#impSample')) $('#impSample').onclick = () => downloadCSV(`mau-import-${kind}.csv`, h.sample);
+  $('#impGo').onclick = async () => {
+    const text = $('#impText').value; if (!text.trim()) return toast('Chưa có dữ liệu để import', 1);
+    const b = $('#impGo'); b.disabled = true; b.textContent = 'Đang import...';
+    try {
+      const r = await api('/import/' + kind, { method: 'POST', body: { text, filename, domain_id: dom ? dom.id : undefined, category: isDom ? $('#impGroup').value : undefined } });
+      $('#impResult').innerHTML = importResultHTML(r);
+      toast(`Đã import: thêm ${r.added}, cập nhật ${r.updated || 0}`);
+      if (isDom) await loadDomains();
+      if (after) after(); else if (isDom) VIEWS.domains();
+    } catch (er) { toast(er.message, 1); }
+    b.disabled = false; b.textContent = 'Bắt đầu import';
+  };
+}
+const IMP_STATUS = { added: ['g', 'Đã thêm'], updated: ['b', 'Cập nhật'], exists: ['', 'Đã tồn tại'], invalid: ['r', 'Lỗi'] };
+function importResultHTML(r) {
+  const skipped = r.skipped ?? (r.total - r.added - (r.updated || 0));
+  return `<div class="result-sum"><span class="badge-s">Tổng ${fmt(r.total)} dòng</span><span class="badge-s g">Thêm ${fmt(r.added)}</span><span class="badge-s b">Cập nhật ${fmt(r.updated || 0)}</span><span class="badge-s ${skipped ? 'r' : ''}">Bỏ qua ${fmt(skipped)}</span></div>
+  <div class="table-wrap" style="max-height:320px;overflow:auto"><table class="mini-table"><thead><tr><th>Mục</th><th>Kết quả</th><th>Ghi chú</th></tr></thead><tbody>
+  ${(r.detail || []).map((x) => { const s = IMP_STATUS[x.status] || ['', x.status]; return `<tr><td class="clip">${esc(x.item)}</td><td><span class="badge-s ${s[0]}">${s[1]}</span></td><td class="sub">${esc(x.note || '')}</td></tr>`; }).join('') || '<tr><td colspan="3" class="empty">Không có chi tiết</td></tr>'}
+  </tbody></table></div>`;
+}
+VIEWS.imports = async () => {
+  const rows = await api('/imports');
+  $('#view').innerHTML = `<div class="page-head"><h1>Lịch sử import</h1><span class="sub">200 lần gần nhất</span></div>
+  <div class="card"><div class="table-wrap"><table><thead><tr><th>Thời gian</th><th>Người thực hiện</th><th>Loại</th><th>Domain</th><th>File</th><th class="r">Tổng</th><th class="r">Thêm</th><th class="r">Cập nhật</th><th class="r">Bỏ qua</th><th></th></tr></thead><tbody>
+  ${rows.map((r) => `<tr><td class="sub">${fmtTime(r.ts)}</td><td>${esc(r.username)}</td><td>${IMPORT_KIND[r.kind] || esc(r.kind)}</td><td class="sub">${esc(r.host || (r.kind === 'domains' ? '—' : '(đã xoá)'))}</td><td class="sub clip">${esc(r.filename || '(dán trực tiếp)')}</td>
+    <td class="r">${fmt(r.total)}</td><td class="r">${fmt(r.added)}</td><td class="r">${fmt(r.updated)}</td><td class="r">${r.skipped ? `<b style="color:var(--red)">${fmt(r.skipped)}</b>` : 0}</td>
+    <td class="acts"><button class="act" data-imp="${r.id}">${icon('search')} Chi tiết</button></td></tr>`).join('') || '<tr><td colspan="10" class="empty">Chưa có lần import nào</td></tr>'}
+  </tbody></table></div></div>`;
+  $$('[data-imp]').forEach((b) => (b.onclick = () => {
+    const r = rows.find((x) => x.id === +b.dataset.imp);
+    openModal(`<div class="m-head"><h2>Import ${IMPORT_KIND[r.kind] || r.kind} · ${fmtTime(r.ts)}</h2><button class="m-close" data-close>×</button></div><div class="m-body">${importResultHTML(r)}</div><div class="m-foot"><button class="btn" data-close>Đóng</button></div>`);
+  }));
+};
+
+/* ================= Dữ liệu chính & Nội dung (CRUD chung) ================= */
+const opt = (rows, empty) => [['', empty], ...rows.map((r) => [r.id, r.name])];
+const offerState = (o) => {
+  const t = today();
+  if (o.status !== 'active') return '<span class="badge-s">Ẩn</span>';
+  if (o.expires && o.expires < t) return '<span class="badge-s r">Hết hạn</span>';
+  if (o.starts && o.starts > t) return '<span class="badge-s o">Chưa bắt đầu</span>';
+  if (o.source === 'tracker' && (!o.last_seen || Date.now() - o.last_seen > 7 * 864e5)) return '<span class="badge-s o">Không còn trên trang</span>';
+  return '<span class="badge-s g">Đang chạy</span>';
+};
+const range2 = (a, b) => (a || b ? `${a ? fmtDay(a) : '…'} – ${b ? fmtDay(b) : '…'}` : '<span class="sub">Không giới hạn</span>');
+const nameSlug = (name, slug) => `<td class="store-cell"><b>${esc(name)}</b><span class="sub">/${esc(slug)}</span></td>`;
+const snip = (s, n = 90) => { s = String(s || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(); return esc(s.length > n ? s.slice(0, n) + '…' : s); };
+
+const RV = {
+  categories: {
+    title: 'Danh mục', tpl: 'category',
+    cols: [['Danh mục', (r) => nameSlug(r.name, r.slug)], ['Danh mục cha', (r) => `<td>${esc(r.parent_name || '—')}</td>`], ['Cửa hàng', (r) => `<td class="r">${fmt(r.stores)}</td>`, 'r'], ['Thứ tự', (r) => `<td class="r">${r.sort}</td>`, 'r']],
+    form: (o, row) => [{ k: 'name', l: 'Tên danh mục', req: 1 }, { k: 'slug', l: 'Slug', hint: 'Để trống = tự tạo từ tên' },
+      { k: 'parent_id', l: 'Danh mục cha', t: 'select', opts: opt(o.categories.filter((c) => !row || c.id !== row.id), '— Không —') }, { k: 'sort', l: 'Thứ tự', t: 'number' },
+      { k: 'description', l: 'Mô tả', t: 'content' }],
+  },
+  stores: {
+    title: 'Cửa hàng', tpl: 'store', importKind: 'stores',
+    filters: (o) => [{ k: 'category_id', opts: opt(o.categories, 'Tất cả danh mục') }, { k: 'status', opts: [['', 'Mọi trạng thái'], ['active', 'Hiển thị'], ['hidden', 'Ẩn']] }],
+    cols: [
+      ['Cửa hàng', (r) => `<td><div class="flex">${r.logo ? `<img class="thumb" src="${esc(r.logo)}" alt="" loading="lazy">` : ''}<div class="store-cell"><b>${esc(r.name || r.slug)}</b><span class="sub">${esc(r.url ? hostOfUrl(r.url) : '/' + r.slug)}</span></div></div></td>`],
+      ['Danh mục', (r) => `<td>${esc(r.category_name || '—')}</td>`],
+      ['Ưu đãi đang chạy', (r) => `<td class="r"><span class="pill-n">${r.offers_active}</span> <span class="sub">/ ${r.offers_total}</span></td>`, 'r'],
+      ['Trạng thái', (r) => `<td>${statusBadge(r.status)}</td>`], ['Nguồn', (r) => `<td class="sub">${SOURCE_LABEL[r.source] || esc(r.source)}</td>`],
+    ],
+    actions: (r) => `<button class="act" data-perf="${r.id}">${icon('chart')} Hiệu quả</button><a class="act" href="${esc(r.open_url)}" target="_blank" rel="noopener">${icon('open')} Mở trang</a>`,
+    form: (o) => [{ k: 'name', l: 'Tên cửa hàng', req: 1 }, { k: 'slug', l: 'Slug', hint: 'Phần {slug} trên URL trang cửa hàng' }, { k: 'url', l: 'Website cửa hàng', ph: 'https://insta360.com' },
+      { k: 'category_id', l: 'Danh mục', t: 'select', opts: opt(o.categories, '— Không —') }, { k: 'logo', l: 'Logo (URL ảnh)' }, { k: 'status', l: 'Trạng thái', t: 'select', opts: [['active', 'Hiển thị'], ['hidden', 'Ẩn']] },
+      { k: 'description', l: 'Mô tả', t: 'content' }],
+    csv: [['name', 'Tên'], ['slug', 'Slug'], ['url', 'Website'], ['category_name', 'Danh mục'], ['status', 'Trạng thái'], ['offers_active', 'Ưu đãi đang chạy'], ['open_url', 'Trang']],
+  },
+  offers: {
+    title: 'Mã & ưu đãi', tpl: 'offer', importKind: 'offers',
+    filters: (o) => [{ k: 'store_id', opts: opt(o.stores, 'Tất cả cửa hàng') }, { k: 'type', opts: [['', 'Mọi loại'], ['code', 'Mã giảm giá'], ['deal', 'Ưu đãi']] },
+      { k: 'event_id', opts: opt(o.promo_events, 'Mọi sự kiện') }, { k: 'status', opts: [['', 'Mọi trạng thái'], ['active', 'Hiển thị'], ['hidden', 'Ẩn']] }],
+    cols: [
+      ['Ưu đãi', (r) => `<td class="store-cell" style="min-width:220px" title="Mã theo dõi: ${esc(r.okey)}"><b>${esc(r.title || r.okey)}</b><span class="sub">${OFFER_TYPE[r.type] || ''}${r.verified ? ' · ✓ Đã xác minh' : ''}</span></td>`],
+      ['Mã', (r) => `<td>${r.code ? `<span class="code-pill" data-copy="${esc(r.code)}" title="Copy mã">${esc(r.code)} ${icon('copy')}</span>` : '<span class="sub">—</span>'}</td>`],
+      ['Cửa hàng', (r) => `<td>${esc(r.store_name || '—')}</td>`], ['Giảm', (r) => `<td>${esc(r.discount || '—')}</td>`],
+      ['Thời hạn', (r) => `<td class="sub">${range2(r.starts, r.expires)}</td>`], ['Sự kiện', (r) => `<td class="sub">${esc(r.event_name || '—')}</td>`],
+      ['Tình trạng', (r) => `<td>${offerState(r)}</td>`], ['Nguồn', (r) => `<td class="sub">${SOURCE_LABEL[r.source] || esc(r.source)}</td>`],
+    ],
+    form: (o) => [{ k: 'store_id', l: 'Cửa hàng', t: 'select', req: 1, opts: opt(o.stores, '— Chọn cửa hàng —') }, { k: 'title', l: 'Tiêu đề', req: 1, full: 1 },
+      { k: 'type', l: 'Loại', t: 'select', opts: [['code', 'Mã giảm giá'], ['deal', 'Ưu đãi']] }, { k: 'code', l: 'Mã giảm giá', ph: 'SAVE10' },
+      { k: 'discount', l: 'Mức giảm', ph: '10%, $20...' }, { k: 'url', l: 'Link ưu đãi (affiliate)' }, { k: 'starts', l: 'Bắt đầu', t: 'date' }, { k: 'expires', l: 'Hết hạn', t: 'date' },
+      { k: 'event_id', l: 'Sự kiện khuyến mãi', t: 'select', opts: opt(o.promo_events, '— Không —') }, { k: 'status', l: 'Trạng thái', t: 'select', opts: [['active', 'Hiển thị'], ['hidden', 'Ẩn']] },
+      { k: 'sort', l: 'Độ ưu tiên', t: 'number', hint: 'Số lớn hiện trước' }, { k: 'okey', l: 'Mã theo dõi', hint: 'Trùng với data-cp-offer trên website. Để trống = tự tạo' },
+      { k: 'verified', l: 'Đã xác minh', t: 'bool' }, { k: 'description', l: 'Mô tả', t: 'content' }],
+    csv: [['store_name', 'store'], ['title', 'title'], ['type', 'type'], ['code', 'code'], ['discount', 'discount'], ['url', 'url'], ['starts', 'starts'], ['expires', 'expires'], ['event_name', 'event'], ['description', 'description'], ['okey', 'okey']],
+  },
+  promo_events: {
+    title: 'Sự kiện khuyến mãi', tpl: 'event',
+    filters: () => [{ k: 'status', opts: [['', 'Mọi trạng thái'], ['active', 'Hiển thị'], ['hidden', 'Ẩn']] }],
+    cols: [['Sự kiện', (r) => nameSlug(r.name, r.slug)], ['Thời gian', (r) => `<td>${range2(r.starts, r.ends)}</td>`],
+      ['Tình trạng', (r) => { const t = today(); return `<td>${r.status !== 'active' ? '<span class="badge-s">Ẩn</span>' : r.ends && r.ends < t ? '<span class="badge-s r">Đã kết thúc</span>' : r.starts && r.starts > t ? '<span class="badge-s o">Sắp diễn ra</span>' : '<span class="badge-s g">Đang diễn ra</span>'}</td>`; }],
+      ['Ưu đãi', (r) => `<td class="r">${fmt(r.offers)}</td>`, 'r']],
+    form: () => [{ k: 'name', l: 'Tên sự kiện', req: 1, ph: 'Black Friday 2026' }, { k: 'slug', l: 'Slug' }, { k: 'starts', l: 'Bắt đầu', t: 'date' }, { k: 'ends', l: 'Kết thúc', t: 'date' },
+      { k: 'banner', l: 'Banner (URL ảnh)' }, { k: 'status', l: 'Trạng thái', t: 'select', opts: [['active', 'Hiển thị'], ['hidden', 'Ẩn']] }, { k: 'description', l: 'Mô tả', t: 'content' }],
+  },
+  pages: {
+    title: 'Trang tĩnh', tpl: 'page',
+    filters: () => [{ k: 'status', opts: [['', 'Mọi trạng thái'], ['published', 'Đã xuất bản'], ['draft', 'Bản nháp']] }],
+    cols: [['Tiêu đề', (r) => nameSlug(r.title, r.slug)], ['Trạng thái', (r) => `<td>${statusBadge(r.status)}</td>`], ['Cập nhật', (r) => `<td class="sub">${fmtTime(r.updated_at)}</td>`]],
+    form: () => [{ k: 'title', l: 'Tiêu đề', req: 1 }, { k: 'slug', l: 'Slug', ph: 'about-us' }, { k: 'meta_title', l: 'Meta title (SEO)' },
+      { k: 'status', l: 'Trạng thái', t: 'select', opts: [['published', 'Đã xuất bản'], ['draft', 'Bản nháp']] }, { k: 'meta_description', l: 'Meta description (SEO)', t: 'textarea', full: 1 },
+      { k: 'content', l: 'Nội dung (HTML)', t: 'content' }],
+  },
+  posts: {
+    title: 'Bài viết', tpl: 'post',
+    filters: (o) => [{ k: 'category_id', opts: opt(o.categories, 'Tất cả danh mục') }, { k: 'store_id', opts: opt(o.stores, 'Tất cả cửa hàng') }, { k: 'status', opts: [['', 'Mọi trạng thái'], ['published', 'Đã xuất bản'], ['draft', 'Bản nháp']] }],
+    cols: [['Bài viết', (r) => `<td><div class="flex">${r.thumbnail ? `<img class="thumb" src="${esc(r.thumbnail)}" alt="" loading="lazy">` : ''}<div class="store-cell"><b>${esc(r.title)}</b><span class="sub">/${esc(r.slug)}</span></div></div></td>`],
+      ['Danh mục', (r) => `<td>${esc(r.category_name || '—')}</td>`], ['Cửa hàng', (r) => `<td>${esc(r.store_name || '—')}</td>`],
+      ['Ngày đăng', (r) => `<td class="sub">${r.published_at ? fmtDay(r.published_at) : '—'}</td>`], ['Trạng thái', (r) => `<td>${statusBadge(r.status)}</td>`]],
+    form: (o) => [{ k: 'title', l: 'Tiêu đề', req: 1, full: 1 }, { k: 'slug', l: 'Slug' }, { k: 'thumbnail', l: 'Ảnh đại diện (URL)' },
+      { k: 'category_id', l: 'Danh mục', t: 'select', opts: opt(o.categories, '— Không —') }, { k: 'store_id', l: 'Cửa hàng liên quan', t: 'select', opts: opt(o.stores, '— Không —') },
+      { k: 'published_at', l: 'Ngày đăng', t: 'date', hint: 'Bài hẹn giờ: chỉ hiện từ ngày này' }, { k: 'status', l: 'Trạng thái', t: 'select', opts: [['published', 'Đã xuất bản'], ['draft', 'Bản nháp']] },
+      { k: 'excerpt', l: 'Tóm tắt', t: 'textarea', full: 1 }, { k: 'content', l: 'Nội dung (HTML)', t: 'content' }],
+  },
+  faqs: {
+    title: 'Câu hỏi thường gặp', tpl: 'faq',
+    filters: (o) => [{ k: 'store_id', opts: opt(o.stores, 'Tất cả cửa hàng') }, { k: 'status', opts: [['', 'Mọi trạng thái'], ['published', 'Đã xuất bản'], ['draft', 'Bản nháp']] }],
+    cols: [['Câu hỏi', (r) => `<td class="store-cell"><b>${esc(r.question)}</b><span class="sub">${snip(r.answer)}</span></td>`], ['Cửa hàng', (r) => `<td>${r.store_name ? esc(r.store_name) : '<span class="sub">Câu hỏi chung</span>'}</td>`],
+      ['Thứ tự', (r) => `<td class="r">${r.sort}</td>`, 'r'], ['Trạng thái', (r) => `<td>${statusBadge(r.status)}</td>`]],
+    form: (o) => [{ k: 'question', l: 'Câu hỏi', req: 1, full: 1 }, { k: 'store_id', l: 'Cửa hàng', t: 'select', opts: opt(o.stores, '— Câu hỏi chung của website —') },
+      { k: 'sort', l: 'Thứ tự', t: 'number' }, { k: 'status', l: 'Trạng thái', t: 'select', opts: [['published', 'Đã xuất bản'], ['draft', 'Bản nháp']] }, { k: 'answer', l: 'Trả lời', t: 'content' }],
+  },
+  templates: {
+    title: 'Mẫu nội dung',
+    filters: () => [{ k: 'type', opts: [['', 'Mọi loại'], ...TPL_TYPES] }],
+    cols: [['Tên mẫu', (r) => `<td><b>${esc(r.name)}</b></td>`], ['Dùng cho', (r) => `<td><span class="badge-s b">${(TPL_TYPES.find((t) => t[0] === r.type) || [, r.type])[1]}</span></td>`], ['Xem trước', (r) => `<td class="sub">${snip(r.content, 120)}</td>`]],
+    form: () => [{ k: 'name', l: 'Tên mẫu', req: 1 }, { k: 'type', l: 'Dùng cho', t: 'select', opts: TPL_TYPES },
+      { k: 'content', l: 'Nội dung mẫu', t: 'textarea', rows: 12, full: 1, hint: 'Biến thay thế khi chèn: {store} tên cửa hàng, {title} tiêu đề, {code} mã, {discount} mức giảm, {domain} domain, {site} tên website, {year} năm, {month} tháng' }],
+  },
+};
+
+function fillTpl(content, form) {
+  const g = (k) => { const el = form.elements[k]; if (!el) return ''; return el.tagName === 'SELECT' ? (el.value ? el.options[el.selectedIndex].text : '') : el.value; };
+  const d = curDomain() || {}, now = new Date();
+  const vars = { store: g('store_id') || g('name'), title: g('title') || g('name') || g('question'), code: g('code'), discount: g('discount'), domain: d.host || '', site: d.name || '', year: now.getFullYear(), month: now.getMonth() + 1 };
+  return content.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? vars[k] : m));
+}
+function fieldHTML(f, row, templates) {
+  const v = row ? row[f.k] : undefined;
+  const val = v == null ? '' : v;
+  const lab = `${esc(f.l)}${f.req ? ' *' : ''}${f.hint ? ` <span class="hint">${esc(f.hint)}</span>` : ''}`;
+  const full = f.full || f.t === 'content' ? 'full' : '';
+  if (f.t === 'bool') return `<label class="chk ${full}"><input type="checkbox" name="${f.k}" ${val ? 'checked' : ''}> ${esc(f.l)}</label>`;
+  if (f.t === 'select') {
+    const cur = val === '' && !row ? f.opts[0][0] : val;
+    return `<label class="${full}">${lab}<select name="${f.k}" ${f.req ? 'required' : ''}>${f.opts.map(([o, l]) => `<option value="${esc(o)}" ${String(o) === String(cur) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`;
+  }
+  if (f.t === 'textarea' || f.t === 'content') {
+    const tpls = f.t === 'content' ? templates : [];
+    return `<label class="${full}"><span class="flex" style="justify-content:space-between">${lab}${tpls.length ? `<span class="tpl-row">Chèn từ mẫu <select data-tpl="${f.k}"><option value="">— chọn —</option>${tpls.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select></span>` : ''}</span>
+      <textarea name="${f.k}" rows="${f.rows || (f.t === 'content' ? 10 : 3)}">${esc(val)}</textarea></label>`;
+  }
+  const type = f.t === 'number' ? 'number' : f.t === 'date' ? 'date' : 'text';
+  return `<label class="${full}">${lab}<input type="${type}" name="${f.k}" value="${esc(val)}" ${f.ph ? `placeholder="${esc(f.ph)}"` : ''} ${f.req ? 'required' : ''}></label>`;
+}
+function openForm(name, row, o, done) {
+  const def = RV[name], fields = def.form(o, row);
+  const templates = def.tpl ? o.templates.filter((t) => t.type === def.tpl) : [];
+  openModal(`<div class="m-head"><h2>${row ? 'Sửa' : 'Thêm'} ${esc(def.title.toLowerCase())}</h2><button class="m-close" data-close>×</button></div>
+    <form class="m-body form" id="rForm"><div class="fgrid">${fields.map((f) => fieldHTML(f, row, templates)).join('')}</div></form>
+    <div class="m-foot"><button class="btn" data-close>Huỷ</button><span style="flex:1"></span><button class="btn primary" id="rSave">${row ? 'Lưu thay đổi' : 'Thêm mới'}</button></div>`);
+  const form = $('#rForm');
+  $$('[data-tpl]', form).forEach((s) => (s.onchange = () => {
+    const t = templates.find((x) => x.id === +s.value); if (!t) return;
+    const ta = form.elements[s.dataset.tpl]; const text = fillTpl(t.content, form);
+    ta.value = ta.value.trim() ? ta.value + '\n\n' + text : text; s.value = '';
+  }));
+  const submit = async () => {
+    if (!form.reportValidity()) return;
+    const body = {};
+    for (const f of fields) { const el = form.elements[f.k]; body[f.k] = f.t === 'bool' ? el.checked : el.value; }
+    if (!row) body.domain_id = S.domain;
+    try {
+      await api(`/r/${name}${row ? '/' + row.id : ''}`, { method: row ? 'PUT' : 'POST', body });
+      closeModal(); toast(row ? 'Đã lưu' : 'Đã thêm'); done();
+    } catch (er) { toast(er.message, 1); }
+  };
+  $('#rSave').onclick = submit;
+  form.onsubmit = (e) => { e.preventDefault(); submit(); };
+}
+function resourceView(name) {
+  return async () => {
+    const def = RV[name], view = $('#view');
+    if (!S.domain) { view.innerHTML = needDomainHTML(def.title); bindNeedDomain(); return; }
+    const R = S.res[name] || (S.res[name] = {}); R.f = R.f || {}; R.page = R.page || 1; R.per = R.per || 20; R.q = R.q || '';
+    const o = await api('/options?domain=' + S.domain);
+    const filters = def.filters ? def.filters(o) : [];
+    const dom = curDomain();
+    view.innerHTML = `<div class="page-head"><h1>${esc(def.title)}</h1><span class="sub">${esc(dom.name)} · ${esc(dom.host)}</span><span class="sp"></span>
+      <div class="toolbar">${def.csv ? '<button class="btn" id="rCsv">Xuất CSV</button>' : ''}${def.importKind && canEdit() ? `<button class="btn" id="rImp">${icon('upload')} Import CSV</button>` : ''}
+      ${canEdit() ? `<button class="btn primary" id="rAdd">+ Thêm ${esc(def.title.toLowerCase())}</button>` : ''}</div></div>
+    <div class="card"><div class="card-head toolbar">${filters.map((f) => `<select data-f="${f.k}">${f.opts.map(([v, l]) => `<option value="${esc(v)}" ${String(R.f[f.k] ?? '') === String(v) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`).join('')}
+      <span class="sp"></span><div class="search">${icon('search')}<input type="text" id="rq" placeholder="Tìm kiếm" value="${esc(R.q)}"></div></div>
+      <div class="table-wrap" id="rtbl"></div><div id="rpg"></div></div>`;
+    let rows = [];
+    const params = (extra = {}) => new URLSearchParams(Object.entries({ domain: S.domain, q: R.q, page: R.page, per: R.per, ...R.f, ...extra }).filter(([, v]) => v !== '' && v != null)).toString();
+    async function load() {
+      const d = await api(`/r/${name}?` + params());
+      if (!d.rows.length && R.page > 1 && d.total) { R.page = 1; return load(); }
+      rows = d.rows;
+      const acts = (r) => `<td class="acts">${def.actions ? def.actions(r) : ''}${canEdit() ? `<button class="act" data-edit="${r.id}">${icon('edit')} Sửa</button><button class="act danger" data-del="${r.id}">${icon('trash')} Xoá</button>` : ''}</td>`;
+      $('#rtbl').innerHTML = `<table><thead><tr>${def.cols.map((c) => `<th class="${c[2] || ''}">${c[0]}</th>`).join('')}<th></th></tr></thead><tbody>
+        ${rows.map((r) => `<tr>${def.cols.map((c) => c[1](r)).join('')}${acts(r)}</tr>`).join('') || `<tr><td colspan="${def.cols.length + 1}" class="empty">Chưa có dữ liệu${canEdit() ? '. Bấm <b>+ Thêm</b> để tạo mới.' : ''}</td></tr>`}</tbody></table>`;
+      $('#rpg').innerHTML = pagerHTML(d.total, d.page, d.per);
+      bindPager(view, (pg) => { R.page = pg; save(); load(); }, (n) => { R.per = n; R.page = 1; save(); load(); });
+      $$('[data-edit]', view).forEach((b) => (b.onclick = async () => { const row = await api(`/r/${name}/${b.dataset.edit}`); openForm(name, row, o, refresh); }));
+      $$('[data-del]', view).forEach((b) => (b.onclick = async () => {
+        const r = rows.find((x) => x.id === +b.dataset.del);
+        const extra = name === 'stores' ? '<br><br>Toàn bộ ưu đãi, câu hỏi thường gặp và thống kê của cửa hàng này cũng sẽ bị xoá.' : name === 'categories' ? '<br><br>Các cửa hàng/bài viết thuộc danh mục này sẽ không còn danh mục.' : '';
+        if (!(await confirmBox('Xoá ' + def.title.toLowerCase(), `Xoá <b>${esc(r.name || r.title || r.question)}</b>?${extra}`))) return;
+        try { await api(`/r/${name}/${r.id}`, { method: 'DELETE' }); toast('Đã xoá'); refresh(); } catch (er) { toast(er.message, 1); }
+      }));
+      $$('[data-perf]', view).forEach((b) => (b.onclick = () => openDetail(+b.dataset.perf)));
+      $$('[data-copy]', view).forEach((b) => (b.onclick = () => copyText(b.dataset.copy, 'Đã copy mã ' + b.dataset.copy)));
+    }
+    const refresh = () => resourceView(name)();
+    $$('[data-f]', view).forEach((s) => (s.onchange = () => { R.f[s.dataset.f] = s.value; R.page = 1; save(); load(); }));
+    $('#rq').oninput = debounce((e) => { R.q = e.target.value; R.page = 1; save(); load(); });
+    if ($('#rAdd')) $('#rAdd').onclick = () => openForm(name, null, o, refresh);
+    if ($('#rImp')) $('#rImp').onclick = () => openImport(def.importKind, refresh);
+    if ($('#rCsv')) $('#rCsv').onclick = async () => {
+      const d = await api(`/r/${name}?` + params({ page: 1, per: 1000 }));
+      downloadCSV(`${name}_${dom.host}.csv`, [def.csv.map((c) => c[1])].concat(d.rows.map((r) => def.csv.map((c) => r[c[0]]))));
+    };
+    await load();
+  };
+}
+Object.keys(RV).forEach((n) => (VIEWS[n] = resourceView(n)));
 
 /* ================= Nhân viên ================= */
 VIEWS.users = async () => {
   const view = $('#view');
   if (!isAdmin()) { view.innerHTML = '<div class="card empty">Chỉ quản trị viên mới xem được trang này</div>'; return; }
   const users = await api('/users');
-  view.innerHTML = `<h1 class="page">Nhân viên</h1>
+  const roleOpts = (cur) => Object.entries(ROLE_LABEL).map(([v, l]) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${l}</option>`).join('');
+  view.innerHTML = `<div class="page-head"><h1>Nhân viên</h1></div>
   <div class="card"><div class="card-head"><h3>Thêm tài khoản</h3></div><form id="uForm" class="m-body form"><div class="row">
     <label>Tên đăng nhập<input name="username" required></label><label>Họ tên<input name="name"></label>
     <label>Mật khẩu<input name="password" type="password" minlength="6" required></label>
-    <label>Quyền<select name="role"><option value="viewer">Nhân viên (chỉ xem)</option><option value="admin">Quản trị viên</option></select></label>
-    <button class="btn primary">+ Thêm</button></div></form></div>
+    <label>Quyền<select name="role">${roleOpts('viewer')}</select></label>
+    <button class="btn primary">+ Thêm</button></div>
+    <div class="hint sub"><b>Quản trị viên</b>: toàn quyền (domain, nhân viên). <b>Biên tập viên</b>: thêm/sửa/xoá danh mục, cửa hàng, ưu đãi, nội dung, import. <b>Nhân viên</b>: chỉ xem số liệu.</div></form></div>
   <div class="card"><div class="table-wrap"><table><thead><tr><th>Tên đăng nhập</th><th>Họ tên</th><th>Quyền</th><th>Ngày tạo</th><th></th></tr></thead><tbody>
-  ${users.map((u) => `<tr><td><b>${esc(u.username)}</b></td><td>${esc(u.name)}</td><td>${u.role === 'admin' ? 'Quản trị viên' : 'Nhân viên'}</td><td class="sub">${fmtTime(u.created_at)}</td>
-    <td class="acts"><button class="act" data-upw="${u.id}">${icon('key')} Đặt lại mật khẩu</button>${u.id !== ME.id ? `<button class="act" data-urole="${u.id}" data-role="${u.role}">${icon('users')} ${u.role === 'admin' ? 'Hạ quyền' : 'Lên admin'}</button><button class="act danger" data-udel="${u.id}">${icon('trash')} Xoá</button>` : ''}</td></tr>`).join('')}</tbody></table></div></div>`;
+  ${users.map((u) => `<tr><td><b>${esc(u.username)}</b>${u.id === ME.id ? ' <span class="badge-s">Bạn</span>' : ''}</td><td>${esc(u.name)}</td>
+    <td>${u.id === ME.id ? ROLE_LABEL[u.role] : `<select data-urole="${u.id}" style="height:30px">${roleOpts(u.role)}</select>`}</td><td class="sub">${fmtTime(u.created_at)}</td>
+    <td class="acts"><button class="act" data-uname="${u.id}">${icon('edit')} Đổi tên</button><button class="act" data-upw="${u.id}">${icon('key')} Đặt lại mật khẩu</button>${u.id !== ME.id ? `<button class="act danger" data-udel="${u.id}">${icon('trash')} Xoá</button>` : ''}</td></tr>`).join('')}</tbody></table></div></div>`;
   $('#uForm').onsubmit = async (e) => { e.preventDefault(); try { await api('/users', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('Đã thêm'); VIEWS.users(); } catch (er) { toast(er.message, 1); } };
-  $$('[data-upw]').forEach((b) => (b.onclick = () => {
-    openModal(`<div class="m-head"><h2>Đặt lại mật khẩu</h2><button class="m-close" data-close>×</button></div><form class="m-body form" id="rpw"><label>Mật khẩu mới<input name="password" type="password" minlength="6" required></label><button class="btn primary">Lưu</button></form>`, 'sm');
-    $('#rpw').onsubmit = async (e) => { e.preventDefault(); try { await api('/users/' + b.dataset.upw, { method: 'PUT', body: Object.fromEntries(new FormData(e.target)) }); closeModal(); toast('Đã đổi mật khẩu'); } catch (er) { toast(er.message, 1); } };
+  const small = (title, field, type, val, cb) => {
+    openModal(`<div class="m-head"><h2>${title}</h2><button class="m-close" data-close>×</button></div><form class="m-body form" id="uf"><label>${field}<input name="v" type="${type}" ${type === 'password' ? 'minlength="6" required' : ''} value="${esc(val)}"></label><button class="btn primary">Lưu</button></form>`, 'sm');
+    $('#uf').onsubmit = async (e) => { e.preventDefault(); try { await cb(e.target.elements.v.value); closeModal(); toast('Đã lưu'); VIEWS.users(); } catch (er) { toast(er.message, 1); } };
+  };
+  $$('[data-upw]').forEach((b) => (b.onclick = () => small('Đặt lại mật khẩu', 'Mật khẩu mới', 'password', '', (v) => api('/users/' + b.dataset.upw, { method: 'PUT', body: { password: v } }))));
+  $$('[data-uname]').forEach((b) => (b.onclick = () => small('Đổi họ tên', 'Họ tên', 'text', users.find((u) => u.id === +b.dataset.uname).name, (v) => api('/users/' + b.dataset.uname, { method: 'PUT', body: { name: v } }))));
+  $$('[data-urole]').forEach((s) => (s.onchange = async () => { try { await api('/users/' + s.dataset.urole, { method: 'PUT', body: { role: s.value } }); toast('Đã đổi quyền'); } catch (er) { toast(er.message, 1); } }));
+  $$('[data-udel]').forEach((b) => (b.onclick = async () => {
+    const u = users.find((x) => x.id === +b.dataset.udel);
+    if (!(await confirmBox('Xoá tài khoản', `Xoá tài khoản <b>${esc(u.username)}</b>?`))) return;
+    try { await api('/users/' + u.id, { method: 'DELETE' }); toast('Đã xoá'); VIEWS.users(); } catch (er) { toast(er.message, 1); }
   }));
-  $$('[data-urole]').forEach((b) => (b.onclick = async () => { try { await api('/users/' + b.dataset.urole, { method: 'PUT', body: { role: b.dataset.role === 'admin' ? 'viewer' : 'admin' } }); VIEWS.users(); } catch (er) { toast(er.message, 1); } }));
-  $$('[data-udel]').forEach((b) => (b.onclick = async () => { if (!confirm('Xoá tài khoản này?')) return; try { await api('/users/' + b.dataset.udel, { method: 'DELETE' }); VIEWS.users(); } catch (er) { toast(er.message, 1); } }));
 };
 
 /* ================= Hướng dẫn ================= */
 VIEWS.guide = async () => {
-  $('#view').innerHTML = `<h1 class="page">Hướng dẫn cài đặt</h1><div class="card"><div class="m-body guide">
-    <h3>1. Thêm domain</h3><p>Vào mục <a href="#/domains">Domain</a> → nhập domain (vd <code>magiamgia.com</code>) → <b>Thêm domain</b>.</p>
-    <h3>2. Dán mã nhúng</h3><p>Bấm <b>Mã nhúng</b>, sao chép đoạn <code>&lt;script&gt;</code> và dán vào header chung của website (WordPress: Appearance → Theme File Editor → header.php, hoặc plugin "Insert Headers and Footers").</p>
-    <h3>3. Đánh dấu cửa hàng & ưu đãi</h3><p>Thêm <code>data-cp-store="slug"</code> vào trang cửa hàng và <code>data-cp-offer="id"</code> cho mỗi ưu đãi. Nếu URL trang cửa hàng có dạng <code>/store/insta360</code>, <code>/coupons/insta360</code>... thì không cần đánh dấu cửa hàng — hệ thống tự nhận.</p>
-    <h3>4. Gắn tham số cho quảng cáo</h3><p>Trong Google Ads → Cài đặt tài khoản → <b>Hậu tố URL cuối cùng</b>: <code>utm_source=google&amp;utm_medium=cpc&amp;utm_campaign={campaignid}&amp;utm_term={keyword}</code></p>
-    <h3>5. Xem số liệu</h3><p>Mở <a href="#/performance">Hiệu quả cửa hàng</a>. Mục Domain sẽ báo <span class="status"><span class="dot on"></span>Đang nhận dữ liệu</span> khi mã đã chạy đúng.</p>
+  $('#view').innerHTML = `<div class="page-head"><h1>Hướng dẫn</h1></div><div class="card"><div class="m-body guide">
+    <h3>1. Thêm domain</h3><p>Vào <a href="#/domains">Domain</a> → nhập domain (vd <code>example.com</code>), nhóm (vd UK, US) → <b>Thêm domain</b>. Có thể dán nhiều domain một lúc bằng <b>Nhập nhiều domain</b>. Hệ thống tự kiểm tra online, chứng chỉ SSL và ngày hết hạn domain.</p>
+    <h3>2. Dán mã nhúng</h3><p>Bấm <b>Mã nhúng</b>, sao chép đoạn <code>&lt;script&gt;</code> và dán vào header chung của website (WordPress: plugin "Insert Headers and Footers" hoặc file header.php của theme).</p>
+    <h3>3. Đánh dấu cửa hàng & ưu đãi</h3><p>Thêm <code>data-cp-store="slug"</code> vào trang cửa hàng và <code>data-cp-offer="mã-theo-dõi"</code> cho mỗi ưu đãi. Nếu URL trang cửa hàng khớp mẫu của domain (mặc định <code>/store/{slug}</code>) thì không cần đánh dấu cửa hàng.</p>
+    <h3>4. Gắn tham số cho quảng cáo</h3><p>Google Ads → Cài đặt tài khoản → <b>Hậu tố URL cuối cùng</b>: <code>utm_source=google&amp;utm_medium=cpc&amp;utm_campaign={campaignid}&amp;utm_term={keyword}</code>. Link có <code>gad_source=1</code> hoặc <code>gclid</code> tự được tính là Quảng cáo.</p>
+    <h3>5. Quản lý dữ liệu</h3><ul>
+      <li><b>Danh mục, Cửa hàng, Mã & ưu đãi, Sự kiện khuyến mãi</b>: chọn domain ở góc trái, thêm tay hoặc <b>Import CSV</b> (có file mẫu). Cửa hàng/ưu đãi cũng tự xuất hiện khi trang có mã nhúng được truy cập.</li>
+      <li><b>Trang tĩnh, Bài viết, Câu hỏi thường gặp</b>: soạn nội dung cho từng domain. <b>Mẫu nội dung</b> giúp chèn nhanh đoạn văn có sẵn với biến <code>{store}</code>, <code>{year}</code>...</li>
+      <li>Website đọc nội dung đã xuất bản qua <b>API công khai</b> (xem trong <b>Domain → Mã nhúng</b>).</li>
+      <li>Mọi lần import được lưu ở <a href="#/imports">Lịch sử import</a>.</li></ul>
+    <h3>6. Phân quyền</h3><p><b>Quản trị viên</b>: toàn quyền. <b>Biên tập viên</b>: sửa dữ liệu & nội dung, import. <b>Nhân viên</b>: chỉ xem.</p>
     <h3>Cách tính chỉ số</h3><ul>
-      <li><b>Lượt vào</b>: số lần trang cửa hàng được mở. <b>Vào thẳng</b>: lượt vào từ bên ngoài website (không phải bấm từ trang khác trong site).</li>
-      <li><b>Kênh</b>: Quảng cáo (có <code>gad_source</code>, <code>gclid</code>, <code>msclkid</code> hoặc <code>utm_medium=cpc</code>), Tìm kiếm tự nhiên (đến từ Google/Bing... không có tham số quảng cáo), Truy cập trực tiếp (không có nguồn), Khác (mạng xã hội, trang khác, email). Kênh được giữ nguyên trong cả phiên truy cập.</li>
+      <li><b>Lượt vào</b>: số lần trang cửa hàng được mở. <b>Vào thẳng</b>: lượt vào từ bên ngoài website.</li>
+      <li><b>Kênh</b>: Quảng cáo (<code>gad_source</code>, <code>gclid</code>, <code>msclkid</code> hoặc <code>utm_medium=cpc</code>), Tìm kiếm tự nhiên (từ Google/Bing... không có tham số quảng cáo), Truy cập trực tiếp (không có nguồn), Khác (mạng xã hội, trang khác, email). Kênh được giữ nguyên trong cả phiên.</li>
       <li><b>Tỉ lệ bấm</b> = lượt vào có ít nhất 1 lần bấm / tổng lượt vào.</li>
-      <li><b>Ưu đãi đang chạy</b>: số ưu đãi (<code>data-cp-offer</code>) xuất hiện trên trang trong 7 ngày gần nhất.</li>
-      <li><b>Quốc gia</b>: lấy từ header Cloudflare (<code>CF-IPCountry</code>) hoặc thư viện geoip-lite nếu đã cài.</li></ul>
+      <li><b>Ưu đãi đang chạy</b>: ưu đãi đang hiển thị, trong thời hạn, và (nhập tay hoặc xuất hiện trên trang trong 7 ngày gần nhất).</li>
+      <li><b>Quốc gia</b>: lấy từ header Cloudflare (<code>CF-IPCountry</code>) hoặc geoip-lite nếu đã cài.</li></ul>
   </div></div>`;
 };
 

@@ -1,9 +1,9 @@
 {
-  "name": "coupon-domain-dashboard",
-  "version": "1.0.0",
+  "name": "domain-manager",
+  "version": "3.0.0",
   "private": true,
   "type": "module",
-  "description": "Dashboard quản lý & theo dõi hiệu quả cửa hàng cho nhiều domain coupon",
+  "description": "Quản lý nhiều domain: theo dõi hiệu quả cửa hàng, dữ liệu, nội dung, uptime/SSL",
   "scripts": {
     "start": "node server.js",
     "demo": "node seed-demo.js"

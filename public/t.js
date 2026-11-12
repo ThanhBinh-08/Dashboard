@@ -1,12 +1,12 @@
-/* Coupon Dashboard tracker – nhúng: <script async src="https://DASHBOARD/t.js" data-site="SITE_KEY"></script> */
+/* Domain Manager tracker – nhúng: <script async src="https://DASHBOARD/t.js" data-site="SITE_KEY"></script> */
 (function (w, d) {
   'use strict';
   var sc = d.currentScript || (function () { var s = d.querySelectorAll('script[data-site]'); return s[s.length - 1]; })();
-  if (!sc || w.__cpTrackLoaded) return; w.__cpTrackLoaded = 1;
+  if (!sc || w.__dmTrack) return; w.__dmTrack = 1;
   var KEY = sc.getAttribute('data-site'); if (!KEY) return;
   var EP = sc.getAttribute('data-endpoint') || (sc.src.split('/').slice(0, 3).join('/') + '/api/collect');
   var EXTRA = sc.getAttribute('data-click') || '';
-  var BASE = '[data-cp-click],[data-cp-copy],[data-cp-offer] a,[data-cp-offer] button,a[data-cp-offer],button[data-cp-offer]';
+  var BASE = '[data-cp-click],[data-cp-copy],[data-cp-offer] a,[data-cp-offer] button,a[data-cp-offer],button[data-cp-offer],a[href]';
   var SEL = EXTRA ? BASE + ',' + EXTRA : BASE;
 
   function rid() { var a = ''; for (var i = 0; i < 3; i++) a += Math.random().toString(36).slice(2, 8); return a + Date.now().toString(36); }
@@ -17,11 +17,7 @@
 
   var vid = store('localStorage', 'cp_vid'); if (!vid) { vid = rid(); store('localStorage', 'cp_vid', vid); }
   var here = location.hostname.toLowerCase().replace(/^www\./, '');
-  var ref = d.referrer || '';
-  var internal = host(ref) === here;
-  var land = null; try { land = JSON.parse(store('sessionStorage', 'cp_land') || 'null'); } catch (e) { }
-  if (!internal || !land) { land = { u: location.href, r: internal ? '' : ref }; store('sessionStorage', 'cp_land', JSON.stringify(land)); }
-  var VISIT = rid();
+  var VISIT = null, lastUrl = '';
 
   function send(o) {
     o.k = KEY; o.v = VISIT; var b = JSON.stringify(o);
@@ -48,25 +44,49 @@
   }
   function allOffers() { var r = [], l = d.querySelectorAll('[data-cp-offer]'); for (var i = 0; i < l.length && i < 100; i++) { var o = offerOf(l[i]); if (o && o.id) r.push(o); } return r; }
 
-  var sent = false;
-  function pv() { if (sent) return; sent = true; send({ t: 'pv', u: location.href, r: ref, l: land, vid: vid, s: storeInfo(), o: allOffers() }); }
-  if (d.readyState === 'loading') d.addEventListener('DOMContentLoaded', pv); else pv();
+  // Lượt xem trang (hỗ trợ cả website dạng SPA)
+  function pv(ref) {
+    if (location.href === lastUrl) return; lastUrl = location.href;
+    VISIT = rid();
+    var internal = host(ref) === here;
+    var land = null; try { land = JSON.parse(store('sessionStorage', 'cp_land') || 'null'); } catch (e) { }
+    if (!internal || !land) { land = { u: location.href, r: internal ? '' : ref }; store('sessionStorage', 'cp_land', JSON.stringify(land)); }
+    send({ t: 'pv', u: location.href, r: ref, l: land, vid: vid, s: storeInfo(), o: allOffers() });
+  }
+  function start() { pv(d.referrer || ''); }
+  if (d.readyState === 'loading') d.addEventListener('DOMContentLoaded', start); else start();
+  function spa() { var prev = lastUrl; setTimeout(function () { if (location.href !== prev) pv(prev); }, 300); }
+  try {
+    var ps = history.pushState; history.pushState = function () { var r = ps.apply(this, arguments); spa(); return r; };
+    var rs = history.replaceState; history.replaceState = function () { var r = rs.apply(this, arguments); spa(); return r; };
+    w.addEventListener('popstate', spa);
+  } catch (e) { }
 
+  // Lượt bấm & copy mã
   var last = null, lastCopy = 0;
-  function posOf(el) { var p = closest(el, '[data-cp-pos]'); if (p) return p.getAttribute('data-cp-pos'); return closest(el, '[data-cp-offer]') ? 'Danh sách ưu đãi' : 'Nút trên trang'; }
-  function ev(t, offer, pos) {
+  function posOf(el) {
+    var p = closest(el, '[data-cp-pos]'); if (p) return p.getAttribute('data-cp-pos');
+    if (closest(el, '[data-cp-offer]')) return 'Danh sách ưu đãi';
+    if (el.tagName === 'A' && host(el.href) && host(el.href) !== here) return 'Link ra ngoài';
+    return 'Nút trên trang';
+  }
+  function ev(t, offer, pos, target) {
     if (t === 'copy') { var n = Date.now(); if (n - lastCopy < 800) return; lastCopy = n; }
-    send({ t: t, of: offer ? offer.id : '', ot: offer ? offer.title : '', ty: offer ? offer.type : '', p: pos || '' });
+    send({ t: t, of: offer ? offer.id : '', ot: offer ? offer.title : '', ty: offer ? offer.type : '', p: pos || '', tg: target || '' });
   }
   d.addEventListener('click', function (e) {
     var el = closest(e.target, SEL); if (!el) return;
-    var o = offerOf(el); last = { o: o, p: posOf(el), t: Date.now() };
-    ev('click', o, last.p);
+    var o = offerOf(el);
+    var isTracked = o || el.hasAttribute('data-cp-click') || el.hasAttribute('data-cp-copy') || (EXTRA && el.matches && el.matches(EXTRA));
+    var outbound = el.tagName === 'A' && host(el.href) && host(el.href) !== here;
+    if (!isTracked && !outbound) return; // link nội bộ thường: không tính là lượt bấm
+    last = { o: o, p: posOf(el), t: Date.now() };
+    ev('click', o, last.p, outbound ? host(el.href) : '');
     if (el.hasAttribute('data-cp-copy')) ev('copy', o, last.p);
   }, true);
 
   function onCopy(fromEl) {
-    var o = fromEl ? offerOf(fromEl) : null, p = fromEl ? posOf(fromEl) : '';
+    var o = fromEl ? offerOf(fromEl) : null, p = fromEl && closest(fromEl, '*') ? posOf(closest(fromEl, '*')) : '';
     if (!o && last && Date.now() - last.t < 15000) { o = last.o; p = last.p; }
     ev('copy', o, p);
   }
