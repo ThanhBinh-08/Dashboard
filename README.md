@@ -5,7 +5,7 @@ Quản lý **nhiều domain** trong một nơi:
 - **Thống kê**: Bảng điều khiển, Hiệu quả cửa hàng (lượt vào, từ Ads, tỉ lệ bấm, lượt bấm, copy mã, quốc gia chính, ưu đãi đang chạy), chi tiết theo vị trí bấm / nguồn / quốc gia / chiến dịch & từ khoá / ưu đãi / thiết bị / ngày, trang Từ khoá (xuất CSV).
 - **Dữ liệu chính** (riêng cho từng domain): Domain (nhóm, uptime, SSL, ngày hết hạn domain), Danh mục, Cửa hàng, Mã & ưu đãi, Sự kiện khuyến mãi. Import CSV có file mẫu.
 - **Nội dung**: Trang tĩnh, Bài viết, Câu hỏi thường gặp, Mẫu nội dung (chèn nhanh với biến `{store}`, `{year}`...). Website đọc qua API công khai.
-- **Hệ thống**: Nhân viên (Quản trị viên / Biên tập viên / Nhân viên chỉ xem), Lịch sử import, Hướng dẫn.
+- **Hệ thống**: Nhân viên (Quản trị viên / Biên tập viên / Nhân viên chỉ xem), Lịch sử import. Domain và Hướng dẫn nằm ở thanh trên cùng (nút quả địa cầu / menu avatar).
 
 ## Chạy
 
@@ -15,7 +15,7 @@ Yêu cầu: Node.js ≥ 22.13 (khuyên dùng 24). Không cần `npm install`.
 npm start                      # http://localhost:3000
 ```
 
-Lần chạy đầu tạo tài khoản `admin / admin123` → đăng nhập và **đổi mật khẩu ngay** (góc dưới sidebar).
+Lần chạy đầu tạo tài khoản `admin / admin123` → đăng nhập và **đổi mật khẩu ngay** (bấm avatar góc trên bên phải → Đổi mật khẩu).
 Có thể đặt trước: `ADMIN_USER=... ADMIN_PASS=... npm start`.
 
 Dữ liệu demo: `npm run demo` · xoá demo: `node seed-demo.js --remove`.
@@ -24,7 +24,7 @@ Dữ liệu demo: `npm run demo` · xoá demo: `node seed-demo.js --remove`.
 
 ## Thêm domain mới
 
-1. Mục **Domain** → nhập domain, nhóm → **Thêm domain** (hoặc **Nhập nhiều domain**).
+1. Mục **Domain** (nút quả địa cầu cạnh ô chọn domain, hoặc menu avatar) → nhập domain, nhóm → **Thêm domain** (hoặc **Nhập nhiều domain**).
 2. Sao chép **Mã nhúng** và dán vào `<head>` của mọi trang:
    ```html
    <script async src="https://DASHBOARD-CUA-BAN/t.js" data-site="SITE_KEY"></script>
