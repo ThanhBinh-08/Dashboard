@@ -34,6 +34,8 @@ function downloadCSV(name, lines) {
 const RANGES = [['today', 'Hôm nay'], ['yesterday', 'Hôm qua'], ['7d', '7 ngày qua'], ['14d', '14 ngày qua'], ['30d', '30 ngày qua'], ['90d', '90 ngày qua'], ['thismonth', 'Tháng này'], ['lastmonth', 'Tháng trước'], ['custom', 'Tuỳ chọn...']];
 const CHANNELS = [['all', 'Tất cả các kênh'], ['ads', 'Quảng cáo (Ads)'], ['organic', 'Tìm kiếm tự nhiên'], ['direct', 'Truy cập trực tiếp'], ['other', 'Khác (mạng xã hội, trang khác, email...)']];
 const CH_LABEL = { ads: 'Quảng cáo trả phí', organic: 'Tìm kiếm tự nhiên', direct: 'Truy cập trực tiếp', other: 'Khác' };
+const KIND_LABEL = { offer: 'Ưu đãi', outbound: 'Link ra ngoài', internal: 'Link nội bộ', button: 'Nút', other: 'Khác', '': 'Khác' };
+const kindTag = (k) => `<span class="tag k-${esc(k || 'other')}">${KIND_LABEL[k] || esc(k) || 'Khác'}</span>`;
 const DEV_LABEL = { mobile: 'Điện thoại', desktop: 'Máy tính', tablet: 'Máy tính bảng', '': 'Không rõ' };
 const OFFER_TYPE = { code: 'Mã giảm giá', deal: 'Ưu đãi' };
 const ROLE_LABEL = { admin: 'Quản trị viên', editor: 'Biên tập viên', viewer: 'Nhân viên (chỉ xem)' };
@@ -65,6 +67,7 @@ const IC = {
   layout: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12"/>',
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6.5 6.5 0 0 1 3.5 6"/>',
   upload: '<path d="M12 16V4M7 9l5-5 5 5M4 20h16"/>',
+  download: '<path d="M12 4v12M7 11l5 5 5-5M4 20h16"/>',
   book: '<path d="M4 4h6a3 3 0 0 1 3 3v13a2 2 0 0 0-2-2H4zM20 4h-6a3 3 0 0 0-3 3v13a2 2 0 0 1 2-2h7z"/>',
   search: '<path d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"/>',
   open: '<path d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"/>',
@@ -151,6 +154,7 @@ $('#domainSel').onchange = (e) => { setScope(e.target.value); render(); };
 async function boot() {
   try { ME = await api('/me'); } catch { return; }
   $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
+  $$('.admin-only').forEach((el) => el.classList.toggle('hidden', !isAdmin()));
   $('#meName').textContent = ME.name || ME.username; $('#meRole').textContent = ROLE_LABEL[ME.role] || ME.role;
   $('#avatarBtn').textContent = (ME.name || ME.username).trim().split(/\s+/).map((w) => w[0]).slice(-2).join('').toUpperCase();
   await loadDomains(); render();
@@ -225,7 +229,7 @@ function bindNeedDomain() { const s = $('#pickDom'); if (s) s.onchange = (e) => 
 /* ================= Bảng điều khiển ================= */
 VIEWS.dashboard = async () => {
   const view = $('#view');
-  const [fh, d] = await Promise.all([filtersHTML(), api('/overview?' + qs())]);
+  const [fh, d, clicks] = await Promise.all([filtersHTML(), api('/overview?' + qs()), api('/clicks?' + qs({ limit: 20 }))]);
   const k = d.kpi, p = d.prev, c = d.counts, h = d.health;
   const delta = (a, b) => { if (!b) return a ? '<span class="delta up">mới</span>' : ''; const x = Math.round(((a - b) * 100) / b); return `<span class="delta ${x >= 0 ? 'up' : 'down'}">${x >= 0 ? '▲' : '▼'} ${Math.abs(x)}%</span>`; };
   const maxDay = Math.max(1, ...d.byDay.map((r) => r.visits));
@@ -254,6 +258,10 @@ VIEWS.dashboard = async () => {
     ${alert(h.expiring, 'domain sắp hết hạn (&lt; 30 ngày)', '#/domains')}
     ${alert(h.notracking, 'domain không nhận dữ liệu 2 ngày qua', '#/domains')}
   </div>
+  <div class="card"><div class="card-head"><h3>Biểu đồ theo ngày</h3><span class="sp"></span><span class="legend"><i style="background:var(--c1)"></i>Lượt vào<i style="background:var(--c2)"></i>Lượt bấm<i style="background:var(--c3)"></i>Copy mã</span></div><div class="chart-wrap">${lineChart(d.byDay)}</div></div>
+  <div class="card"><div class="card-head"><h3>Nút được bấm nhiều nhất</h3><span class="sub">${fmt(clicks.total.clicks)} lượt bấm · ${clicks.byKind.map((x) => (KIND_LABEL[x.kind] || 'Khác') + ' ' + fmt(x.clicks)).join(' · ')}</span><span class="sp"></span><button class="btn sm" id="clkCsv">Xuất CSV toàn bộ lượt bấm</button></div>
+    <div class="table-wrap"><table><thead><tr><th>Nút</th><th>Loại</th><th>Trang</th>${!S.domain ? '<th>Domain</th>' : ''}<th class="r">Lượt vào có bấm</th><th class="r">Lượt bấm</th></tr></thead><tbody>
+    ${clicks.rows.map((r) => `<tr><td class="clip"><b style="font-weight:500">${esc(r.label || '—')}</b></td><td>${kindTag(r.kind)}</td><td class="sub clip">${esc(r.page)}${r.store_name ? ' · ' + esc(r.store_name) : ''}</td>${!S.domain ? `<td class="sub">${esc(r.host)}</td>` : ''}<td class="r">${fmt(r.clicked)}</td><td class="r"><b>${fmt(r.clicks)}</b></td></tr>`).join('') || `<tr><td colspan="6" class="empty">Chưa có lượt bấm nào. Mọi nút được bấm trên website có mã nhúng sẽ hiện ở đây.</td></tr>`}</tbody></table></div></div>
   <div class="card"><div class="card-head"><h3>Theo ngày</h3></div><div class="table-wrap"><table>
     <thead><tr><th>Ngày</th><th style="width:40%"></th><th class="r">Lượt vào</th><th class="r">Tỉ lệ bấm</th><th class="r">Lượt bấm</th><th class="r">Copy mã</th></tr></thead>
     <tbody>${d.byDay.slice().reverse().map((r) => `<tr><td>${fmtDay(r.day)}</td><td><div class="bar-track"><div class="bar" style="width:${(r.visits * 100) / maxDay}%"></div></div></td><td class="r"><b>${fmt(r.visits)}</b></td><td class="r">${r.visits ? pct(r.clicked, r.visits) + '%' : '—'}</td><td class="r">${fmt(r.clicks)}</td><td class="r">${fmt(r.copies)}</td></tr>`).join('')}</tbody></table></div></div>
@@ -271,6 +279,11 @@ VIEWS.dashboard = async () => {
     <thead><tr><th>Domain</th><th class="r">Lượt vào</th><th class="r">Tỉ lệ bấm</th><th class="r">Lượt bấm</th><th class="r">Copy mã</th></tr></thead>
     <tbody>${d.byDomain.map((r) => `<tr><td class="store-cell"><b><a class="link" style="color:inherit" href="javascript:void 0" data-scope="${r.id}">${esc(r.name)}</a></b><span class="sub">${esc(r.host)}</span></td><td class="r">${fmt(r.visits)}</td><td class="r">${rateBadge(r.visits ? r.clicked / r.visits : 0)}</td><td class="r">${fmt(r.clicks)}</td><td class="r">${fmt(r.copies)}</td></tr>`).join('')}</tbody></table></div></div>` : ''}`;
   bindFilters(VIEWS.dashboard);
+  $('#clkCsv').onclick = async () => {
+    const all = await api('/clicks?' + qs({ limit: 0 }));
+    downloadCSV(`luot-bam_${all.from}_${all.to}.csv`, [['Nút', 'Loại', 'Trang', 'Cửa hàng', 'Domain', 'Lượt vào có bấm', 'Lượt bấm', 'Lần cuối']]
+      .concat(all.rows.map((r) => [r.label, KIND_LABEL[r.kind] || r.kind, r.page, r.store_name, r.host, r.clicked, r.clicks, fmtTime(r.last_ts)])));
+  };
   $$('[data-detail]', view).forEach((a) => (a.onclick = () => openDetail(+a.dataset.detail)));
   $$('[data-scope]', view).forEach((a) => (a.onclick = () => { setScope(a.dataset.scope); render(); }));
 };
@@ -344,6 +357,9 @@ async function openDetail(id) {
       <div class="sec-title">Theo vị trí bấm</div>
       <table><thead><tr><th>Vị trí</th><th class="r">Lượt vào có bấm</th><th class="r">Lượt bấm</th><th class="r">Copy mã</th><th class="r">Tỉ trọng lượt bấm</th></tr></thead><tbody>
         ${d.byPosition.map((r) => tr([td(esc(r.position || ''), ''), td(fmt(r.clicked)), td('<b>' + fmt(r.clicks) + '</b>'), td(fmt(r.copies)), td(pct(r.clicks, totalPosClicks) + '%')])).join('') || empty(5)}</tbody></table>
+      <div class="sec-title">Theo nút bấm <span class="sub" style="text-transform:none;font-weight:400">mọi nút được bấm trên trang</span></div>
+      <div class="scroll-box"><table><thead><tr><th>Nút</th><th>Loại</th><th class="r">Lượt vào có bấm</th><th class="r">Lượt bấm</th></tr></thead><tbody>
+        ${(d.byButton || []).map((r) => tr([td(esc(r.label || '—'), 'clip'), td(kindTag(r.kind), ''), td(fmt(r.clicked)), td('<b>' + fmt(r.clicks) + '</b>')])).join('') || empty(4)}</tbody></table></div>
       <div class="sec-title">Theo nguồn</div>
       <table><thead><tr><th>Kênh</th><th>Nguồn</th><th class="r">Lượt vào</th><th class="r">Vào thẳng</th><th class="r">Tỉ lệ bấm</th><th class="r">Lượt bấm</th><th class="r">Copy mã</th></tr></thead><tbody>
         ${d.bySource.map((r) => tr([td(`<span class="tag ${r.channel}">${CH_LABEL[r.channel] || r.channel}</span>`, ''), td(esc(r.source), ''), td('<b>' + fmt(r.visits) + '</b>'), td(fmt(r.entries)), td(pct(r.clicked, r.visits) + '%'), td(fmt(r.clicks)), td(fmt(r.copies))])).join('') || empty(7)}</tbody></table>
@@ -351,8 +367,8 @@ async function openDetail(id) {
       <table><thead><tr><th>Quốc gia</th><th class="r">Lượt vào</th><th class="r">Tỉ lệ bấm</th><th class="r">Lượt bấm</th><th class="r">Copy mã</th></tr></thead><tbody>
         ${d.byCountry.map((r) => tr([td(esc(countryName(r.country)), ''), td('<b>' + fmt(r.visits) + '</b>'), td(pct(r.clicked, r.visits) + '%'), td(fmt(r.clicks)), td(fmt(r.copies))])).join('') || empty(5)}</tbody></table>
       <div class="sec-title">Theo chiến dịch và từ khoá <a id="allKw">Xem mọi từ khoá của store này →</a></div>
-      <table><thead><tr><th>Chiến dịch</th><th>Từ khoá</th><th class="r">Lượt vào</th><th class="r">Tỉ lệ bấm</th><th class="r">Lượt bấm</th><th class="r">Copy mã</th></tr></thead><tbody>
-        ${d.byKeyword.slice(0, 30).map((r) => tr([td(esc(r.campaign || '—'), 'sub'), td(esc(r.keyword), ''), td('<b>' + fmt(r.visits) + '</b>'), td(pct(r.clicked, r.visits) + '%'), td(fmt(r.clicks)), td(fmt(r.copies))])).join('') || empty(6)}</tbody></table>
+      <div class="scroll-box"><table><thead><tr><th>Chiến dịch</th><th>Từ khoá</th><th class="r">Lượt vào</th><th class="r">Tỉ lệ bấm</th><th class="r">Lượt bấm</th><th class="r">Copy mã</th></tr></thead><tbody>
+        ${d.byKeyword.map((r) => tr([td(esc(r.campaign || '—'), 'sub'), td(esc(r.keyword), ''), td('<b>' + fmt(r.visits) + '</b>'), td(pct(r.clicked, r.visits) + '%'), td(fmt(r.clicks)), td(fmt(r.copies))])).join('') || empty(6)}</tbody></table></div>
       <div class="sec-title">Theo ưu đãi</div>
       <table><thead><tr><th>Ưu đãi</th><th class="r">Lượt bấm</th><th class="r">Copy mã</th></tr></thead><tbody>
         ${d.byOffer.map((r) => tr([td(`${esc(r.title || r.okey)} <span class="sub">${esc(OFFER_TYPE[r.type] || r.type || '')}</span>`, ''), td('<b>' + fmt(r.clicks) + '</b>'), td(fmt(r.copies))])).join('') || empty(3)}</tbody></table>
@@ -382,7 +398,8 @@ VIEWS.keywords = async () => {
   view.innerHTML = `<div class="page-head"><h1>Từ khoá</h1><span class="sub">${fmtRange(d.from, d.to)}</span></div>${fh}
   <div class="card"><div class="card-head"><select id="kStore" style="max-width:260px"><option value="0">Tất cả cửa hàng</option>${stores.rows.map((s) => `<option value="${s.id}" ${s.id === S.kstore ? 'selected' : ''}>${esc(s.name || s.slug)}${!S.domain ? ' – ' + esc(s.host) : ''}</option>`).join('')}</select>
     <span class="sp"></span><div class="search">${icon('search')}<input type="text" id="kq" placeholder="Tìm từ khoá" value="${esc(S.kq)}"></div>
-    <button class="btn sm" id="kCsv">Xuất CSV</button></div><div class="table-wrap" id="ktbl"></div><div id="kpg"></div></div>`;
+    ${canEdit() ? '<button class="btn sm" id="kCamp">Tên chiến dịch</button>' : ''}<button class="btn sm" id="kCsv">Xuất CSV</button></div><div class="table-wrap" id="ktbl"></div><div id="kpg"></div></div>`;
+  if ($('#kCamp')) $('#kCamp').onclick = () => openCampaigns(() => VIEWS.keywords());
   bindFilters(VIEWS.keywords);
   $('#kStore').onchange = (e) => { S.kstore = +e.target.value; S.kpage = 1; save(); VIEWS.keywords(); };
   const draw = () => {
@@ -405,7 +422,7 @@ VIEWS.keywords = async () => {
 };
 
 /* ================= Domain ================= */
-function snippet(d) { return `<script async src="${location.origin}/t.js" data-site="${d.site_key}"></script>`; }
+function snippet(d) { return `<script async src="${location.origin}/s.js" data-site="${d.site_key}"></script>`; }
 function healthCells(d) {
   const http = !d.http_checked ? '<span class="status"><span class="dot"></span>Chưa kiểm tra</span>'
     : d.http_status >= 200 && d.http_status < 400 ? `<span class="status"><span class="dot on"></span>Online · ${fmt(d.http_ms)}ms</span>`
@@ -781,8 +798,9 @@ function resourceView(name) {
     if ($('#rAdd')) $('#rAdd').onclick = () => openForm(name, null, o, refresh);
     if ($('#rImp')) $('#rImp').onclick = () => openImport(def.importKind, refresh);
     if ($('#rCsv')) $('#rCsv').onclick = async () => {
-      const d = await api(`/r/${name}?` + params({ page: 1, per: 1000 }));
-      downloadCSV(`${name}_${dom.host}.csv`, [def.csv.map((c) => c[1])].concat(d.rows.map((r) => def.csv.map((c) => r[c[0]]))));
+      const all = [];
+      for (let pg = 1; pg < 1000; pg++) { const d = await api(`/r/${name}?` + params({ page: pg, per: 1000 })); all.push(...d.rows); if (all.length >= d.total || !d.rows.length) break; }
+      downloadCSV(`${name}_${dom.host}.csv`, [def.csv.map((c) => c[1])].concat(all.map((r) => def.csv.map((c) => r[c[0]]))));
     };
     await load();
   };
@@ -822,10 +840,72 @@ VIEWS.users = async () => {
 };
 
 /* ================= Hướng dẫn ================= */
+/* ================= Biểu đồ ================= */
+function lineChart(days) {
+  const W = 1000, H = 220, P = { l: 44, r: 12, t: 12, b: 26 };
+  const n = days.length; if (!n) return '<div class="empty">Chưa có dữ liệu</div>';
+  const max = Math.max(1, ...days.map((d) => Math.max(d.visits, d.clicks, d.copies)));
+  const nice = Math.pow(10, Math.floor(Math.log10(max))); const top = Math.ceil(max / nice) * nice;
+  const x = (i) => P.l + (n === 1 ? (W - P.l - P.r) / 2 : (i * (W - P.l - P.r)) / (n - 1));
+  const y = (v) => P.t + (H - P.t - P.b) * (1 - v / top);
+  const line = (k) => days.map((d, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(d[k]).toFixed(1)).join(' ');
+  const grid = [0, 0.25, 0.5, 0.75, 1].map((f) => `<line x1="${P.l}" x2="${W - P.r}" y1="${y(top * f)}" y2="${y(top * f)}" class="g"/><text x="${P.l - 8}" y="${y(top * f) + 4}" text-anchor="end">${fmt(Math.round(top * f))}</text>`).join('');
+  const step = Math.max(1, Math.ceil(n / 10));
+  const labels = days.map((d, i) => (i % step === 0 || i === n - 1) ? `<text x="${x(i)}" y="${H - 6}" text-anchor="middle">${fmtDay(d.day).slice(0, 5)}</text>` : '').join('');
+  const dots = n <= 40 ? days.map((d, i) => `<circle cx="${x(i)}" cy="${y(d.visits)}" r="3" class="d1"><title>${fmtDay(d.day)}: ${fmt(d.visits)} lượt vào, ${fmt(d.clicks)} lượt bấm, ${fmt(d.copies)} copy</title></circle>`).join('') : '';
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Biểu đồ theo ngày">${grid}${labels}
+    <path d="${line('copies')}" class="l3"/><path d="${line('clicks')}" class="l2"/><path d="${line('visits')}" class="l1"/>${dots}</svg>`;
+}
+
+/* ================= Tên chiến dịch ================= */
+async function openCampaigns(done) {
+  const rows = await api('/campaigns' + (S.domain ? '?domain=' + S.domain : ''));
+  openModal(`<div class="m-head"><h2>Tên chiến dịch</h2><button class="m-close" data-close>×</button></div>
+    <div class="m-body"><p class="sub" style="margin-top:0">Google Ads chỉ gửi <b>ID chiến dịch</b> (<code>{campaignid}</code>). Đặt tên ở đây để mọi bảng hiện tên dễ đọc. Để trống = bỏ tên.</p>
+    <div class="scroll-box" style="max-height:60vh"><table class="mini-table"><thead><tr><th>ID chiến dịch</th>${!S.domain ? '<th>Domain</th>' : ''}<th class="r">Lượt vào</th><th>Tên</th></tr></thead><tbody>
+    ${rows.map((r, i) => `<tr><td><code>${esc(r.cid)}</code></td>${!S.domain ? `<td class="sub">${esc(r.host)}</td>` : ''}<td class="r">${fmt(r.visits)}</td><td><input data-ci="${i}" value="${esc(r.name)}" placeholder="vd: Insta360 UK" style="width:100%"></td></tr>`).join('') || '<tr><td colspan="4" class="empty">Chưa có chiến dịch nào trong dữ liệu</td></tr>'}
+    </tbody></table></div></div>
+    <div class="m-foot"><button class="btn" data-close>Huỷ</button><span style="flex:1"></span><button class="btn primary" id="campSave">Lưu</button></div>`);
+  $('#campSave').onclick = async () => {
+    const items = $$('[data-ci]').map((el) => { const r = rows[+el.dataset.ci]; return { domain_id: r.domain_id, cid: r.cid, name: el.value.trim() }; })
+      .filter((it, i) => it.name !== rows[i].name);
+    try { const r = await api('/campaigns', { method: 'POST', body: { items } }); closeModal(); toast('Đã lưu ' + r.saved + ' tên chiến dịch'); done && done(); } catch (er) { toast(er.message, 1); }
+  };
+}
+
+/* ================= Sao lưu dữ liệu ================= */
+VIEWS.backups = async () => {
+  const view = $('#view');
+  if (!isAdmin()) { view.innerHTML = '<div class="card empty">Chỉ quản trị viên mới xem được trang này</div>'; return; }
+  const [b, h] = await Promise.all([api('/backups'), fetch('/api/health').then((r) => r.json()).catch(() => ({}))]);
+  const size = (n) => n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+  view.innerHTML = `<div class="page-head"><h1>Sao lưu dữ liệu</h1><span class="sub">Tự động mỗi ngày · giữ ${b.keep} bản</span><span class="sp"></span>
+    ${b.alerts ? '<button class="btn" id="tgTest">Gửi thử Telegram</button>' : ''}<button class="btn primary" id="bkNow">Tạo bản sao lưu ngay</button></div>
+  <div class="kpis">
+    <div class="kpi"><div class="l">Trạng thái</div><div class="v" style="color:${h.ok ? 'var(--green)' : 'var(--red)'}">${h.ok ? 'Hoạt động' : 'Lỗi'}</div><div class="s">Cấu trúc DB v${h.schema || '?'}</div></div>
+    <div class="kpi"><div class="l">Lượt vào 1 giờ qua</div><div class="v">${fmt(h.visits_last_hour)}</div><div class="s">Dữ liệu đang được ghi nhận</div></div>
+    <div class="kpi"><div class="l">Bản sao lưu gần nhất</div><div class="v" style="font-size:15px">${b.rows[0] ? fmtTime(b.rows[0].ts) : 'Chưa có'}</div></div>
+    <div class="kpi"><div class="l">Cảnh báo Telegram</div><div class="v" style="font-size:15px">${b.alerts ? 'Đã bật' : 'Chưa cấu hình'}</div><div class="s">${b.alerts ? '' : 'Đặt TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID'}</div></div>
+  </div>
+  <div class="card"><div class="table-wrap"><table><thead><tr><th>File</th><th>Thời gian</th><th class="r">Dung lượng</th><th></th></tr></thead><tbody>
+  ${b.rows.map((r) => `<tr><td><code>${esc(r.name)}</code>${/-\d{6}\.db$/.test(r.name) ? ' <span class="badge-s b">Tạo tay</span>' : ''}</td><td class="sub">${fmtTime(r.ts)}</td><td class="r">${size(r.size)}</td>
+    <td class="acts"><a class="act pri" href="/api/backups/${encodeURIComponent(r.name)}" download>${icon('download')} Tải về</a></td></tr>`).join('') || '<tr><td colspan="4" class="empty">Chưa có bản sao lưu. Bản đầu tiên tự tạo sau khi khởi động 30 giây.</td></tr>'}
+  </tbody></table></div></div>
+  <div class="card"><div class="m-body guide">
+    <h3>Dữ liệu không bị mất khi nào?</h3>
+    <ul><li>File dữ liệu nằm trong thư mục <code>DATA_DIR</code> (Docker: <code>/data</code>). Trên Dokploy phải gắn <b>Volume</b> vào <code>/data</code>, nếu không mỗi lần deploy lại sẽ mất dữ liệu.</li>
+    <li>Bản sao lưu nằm cùng volume (<code>/data/backups</code>). Hãy <b>tải về</b> định kỳ hoặc bật Backups của Dokploy để có bản ở ngoài máy chủ.</li>
+    <li>Khôi phục: dừng app, thay <code>/data/dashboard.db</code> bằng file sao lưu (xoá <code>dashboard.db-wal</code>, <code>dashboard.db-shm</code> nếu có), rồi khởi động lại.</li></ul>
+  </div></div>`;
+  $('#bkNow').onclick = async (e) => { e.target.disabled = true; try { const r = await api('/backups', { method: 'POST' }); toast('Đã tạo ' + r.name); VIEWS.backups(); } catch (er) { toast(er.message, 1); e.target.disabled = false; } };
+  if ($('#tgTest')) $('#tgTest').onclick = async () => { try { await api('/alerts/test', { method: 'POST' }); toast('Đã gửi tin nhắn thử'); } catch (er) { toast(er.message, 1); } };
+};
+
 VIEWS.guide = async () => {
   $('#view').innerHTML = `<div class="page-head"><h1>Hướng dẫn</h1></div><div class="card"><div class="m-body guide">
     <h3>1. Thêm domain</h3><p>Vào <a href="#/domains">Domain</a> → nhập domain (vd <code>example.com</code>), nhóm (vd UK, US) → <b>Thêm domain</b>. Có thể dán nhiều domain một lúc bằng <b>Nhập nhiều domain</b>. Hệ thống tự kiểm tra online, chứng chỉ SSL và ngày hết hạn domain.</p>
     <h3>2. Dán mã nhúng</h3><p>Bấm <b>Mã nhúng</b>, sao chép đoạn <code>&lt;script&gt;</code> và dán vào header chung của website (WordPress: plugin "Insert Headers and Footers" hoặc file header.php của theme).</p>
+    <h3>Mọi cú bấm đều được ghi nhận</h3><p>Sau khi dán mã nhúng, <b>mọi nút / link / tab / menu</b> được bấm trên website đều được gửi về (kể cả mở bằng chuột giữa). Tên nút lấy từ chữ trên nút, <code>aria-label</code> hoặc <code>title</code>; muốn đặt tên riêng dùng <code>data-cp-label="Tên"</code>, muốn bỏ qua một vùng dùng <code>data-cp-ignore</code>. Xem ở <a href="#/dashboard">Bảng điều khiển → Nút được bấm nhiều nhất</a> và trong Chi tiết cửa hàng → <b>Theo nút bấm</b>.</p>
     <h3>3. Đánh dấu cửa hàng & ưu đãi</h3><p>Thêm <code>data-cp-store="slug"</code> vào trang cửa hàng và <code>data-cp-offer="mã-theo-dõi"</code> cho mỗi ưu đãi. Nếu URL trang cửa hàng khớp mẫu của domain (mặc định <code>/store/{slug}</code>) thì không cần đánh dấu cửa hàng.</p>
     <h3>4. Gắn tham số cho quảng cáo</h3><p>Google Ads → Cài đặt tài khoản → <b>Hậu tố URL cuối cùng</b>: <code>utm_source=google&amp;utm_medium=cpc&amp;utm_campaign={campaignid}&amp;utm_term={keyword}</code>. Link có <code>gad_source=1</code> hoặc <code>gclid</code> tự được tính là Quảng cáo.</p>
     <h3>5. Quản lý dữ liệu</h3><ul>

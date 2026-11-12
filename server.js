@@ -3,9 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { db, dayOf, tx, slugify } from './db.js';
+import { db, dayOf, tx, slugify, closeDb, SCHEMA_VERSION } from './db.js';
+import { startBackups, createBackup, listBackups, backupPath } from './backup.js';
+import { startAlerts, sendTelegram, alertsEnabled } from './alerts.js';
 import { startMonitor, checkDomain } from './monitor.js';
-import { storePerformance, storeDetail, keywords, overview, countries } from './stats.js';
+import { storePerformance, storeDetail, keywords, overview, countries, clicksReport } from './stats.js';
 import { RES, listRes, getRes, createRes, updateRes, deleteRes, optionsFor, parseCSV, importStores, importOffers, publicApi } from './resources.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -128,7 +130,11 @@ const Q = {
                          store_id=COALESCE(offers.store_id, excluded.store_id),
                          title=CASE WHEN offers.title='' THEN excluded.title ELSE offers.title END,
                          type=CASE WHEN offers.source='tracker' AND excluded.type<>'' THEN excluded.type ELSE offers.type END`),
-  evIns: db.prepare('INSERT INTO events(visit_id,domain_id,store_id,ts,type,offer,position,target) VALUES(?,?,?,?,?,?,?,?)'),
+  evIns: db.prepare('INSERT INTO events(visit_id,domain_id,store_id,ts,type,offer,position,target,kind,label,tag,page) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)'),
+  pendIns: db.prepare('INSERT INTO pending_events(visit_id,domain_id,ts,payload) VALUES(?,?,?,?)'),
+  pendGet: db.prepare('SELECT * FROM pending_events WHERE visit_id=? ORDER BY id'),
+  pendDel: db.prepare('DELETE FROM pending_events WHERE visit_id=?'),
+  pendCount: db.prepare('SELECT COUNT(*) n FROM pending_events WHERE visit_id=?'),
   clickInc: db.prepare('UPDATE visits SET clicks=clicks+1 WHERE id=?'),
   copyInc: db.prepare('UPDATE visits SET copies=copies+1 WHERE id=?'),
 };
@@ -160,15 +166,31 @@ function handlePV(dom, d, req) {
       const k = str(o && o.id, 100); if (k) Q.offerSeen.run(dom.id, storeId, k, str(o.title, 300), o.type === 'deal' ? 'deal' : 'code', now, now, now);
     }
   });
+  // Cú bấm đến trước lượt vào (mạng gửi lệch thứ tự): gắn lại ngay
+  const vid = str(d.v, 40);
+  const pend = Q.pendGet.all(vid);
+  if (pend.length) {
+    Q.pendDel.run(vid);
+    for (const p of pend) { try { handleEvent(dom, JSON.parse(p.payload), p.ts, true); } catch { } }
+  }
 }
-function handleEvent(dom, d) {
-  const v = Q.visitGet.get(str(d.v, 40));
-  if (!v || v.domain_id !== dom.id) return;
+const MAX_EVENTS_PER_VISIT = 300;
+const KINDS = ['offer', 'outbound', 'internal', 'button', 'other'];
+function handleEvent(dom, d, ts = Date.now(), replay = false) {
+  const vid = str(d.v, 40); if (!vid) return;
+  const v = Q.visitGet.get(vid);
+  if (!v) {
+    // Lượt vào chưa tới: giữ cú bấm lại (tối đa 1 ngày), không bỏ
+    if (!replay && Q.pendCount.get(vid).n < MAX_EVENTS_PER_VISIT) Q.pendIns.run(vid, dom.id, ts, JSON.stringify(d).slice(0, 4000));
+    return;
+  }
+  if (v.domain_id !== dom.id) return;
   const type = d.t === 'copy' ? 'copy' : 'click';
-  if ((type === 'click' ? v.clicks : v.copies) >= 50) return;
-  const okey = str(d.of, 100), now = Date.now();
+  if ((type === 'click' ? v.clicks : v.copies) >= MAX_EVENTS_PER_VISIT) return;
+  const okey = str(d.of, 100), now = ts;
+  const kind = KINDS.includes(d.kd) ? d.kd : (okey ? 'offer' : '');
   tx(() => {
-    Q.evIns.run(v.id, dom.id, v.store_id, now, type, okey, str(d.p, 60), str(d.tg, 200));
+    Q.evIns.run(v.id, dom.id, v.store_id, now, type, okey, str(d.p, 60), str(d.tg, 200), kind, str(d.lb, 120), str(d.tag, 20), str(d.pg, 300));
     (type === 'click' ? Q.clickInc : Q.copyInc).run(v.id);
     if (okey) Q.offerSeen.run(dom.id, v.store_id, okey, str(d.ot, 300), d.ty === 'deal' ? 'deal' : 'code', now, now, now);
   });
@@ -314,6 +336,41 @@ route('POST', '/api/r/:res', 'edit', async (req, res, ctx) => { if (!RES[ctx.par
 route('PUT', '/api/r/:res/:id', 'edit', async (req, res, ctx) => { if (!RES[ctx.params.res]) return send(res, 404, { error: 'Not found' }); const r = updateRes(ctx.params.res, +ctx.params.id, await jsonBody(req)); r.error ? send(res, r.code || 400, r) : send(res, 200, r.row); });
 route('DELETE', '/api/r/:res/:id', 'edit', (req, res, ctx) => { if (!RES[ctx.params.res]) return send(res, 404, { error: 'Not found' }); send(res, 200, deleteRes(ctx.params.res, +ctx.params.id)); });
 
+// Lượt bấm (mọi nút)
+route('GET', '/api/clicks', 'any', (req, res, ctx) => send(res, 200, clicksReport(ctx.q)));
+
+// Tên chiến dịch (ID chiến dịch Google Ads -> tên)
+route('GET', '/api/campaigns', 'any', (req, res, ctx) => {
+  const dom = +ctx.q.get('domain');
+  const where = dom ? 'v.domain_id=?' : '1'; const p = dom ? [dom] : [];
+  send(res, 200, db.prepare(`SELECT v.domain_id, d.host, v.campaign cid, COALESCE(c.name,'') name, COUNT(*) visits
+    FROM visits v JOIN domains d ON d.id=v.domain_id LEFT JOIN campaigns c ON c.domain_id=v.domain_id AND c.cid=v.campaign
+    WHERE ${where} AND v.campaign<>'' GROUP BY v.domain_id, v.campaign ORDER BY visits DESC LIMIT 2000`).all(...p));
+});
+route('POST', '/api/campaigns', 'edit', async (req, res) => {
+  const b = await jsonBody(req); const items = Array.isArray(b.items) ? b.items.slice(0, 5000) : [];
+  const up = db.prepare("INSERT INTO campaigns(domain_id,cid,name,updated_at) VALUES(?,?,?,?) ON CONFLICT(domain_id,cid) DO UPDATE SET name=excluded.name, updated_at=excluded.updated_at");
+  const del = db.prepare('DELETE FROM campaigns WHERE domain_id=? AND cid=?');
+  let n = 0;
+  tx(() => { for (const it of items) { const dom = +it.domain_id, cid = str(it.cid, 200), name = str(it.name, 200); if (!dom || !cid) continue; if (name) up.run(dom, cid, name, Date.now()); else del.run(dom, cid); n++; } });
+  send(res, 200, { ok: true, saved: n });
+});
+
+// Cảnh báo
+route('POST', '/api/alerts/test', 'admin', async (req, res) => {
+  if (!alertsEnabled()) return send(res, 400, { error: 'Chưa cấu hình TELEGRAM_BOT_TOKEN và TELEGRAM_CHAT_ID' });
+  (await sendTelegram('✅ <b>Domain Manager</b>: cảnh báo Telegram hoạt động.')) ? send(res, 200, { ok: true }) : send(res, 502, { error: 'Telegram từ chối tin nhắn – kiểm tra token / chat id (xem log)' });
+});
+
+// Sao lưu
+route('GET', '/api/backups', 'admin', (req, res) => send(res, 200, { keep: +process.env.BACKUP_KEEP || 14, alerts: alertsEnabled(), rows: listBackups() }));
+route('POST', '/api/backups', 'admin', (req, res) => { try { send(res, 200, createBackup(true)); } catch (e) { send(res, 500, { error: 'Không tạo được bản sao lưu: ' + e.message }); } });
+route('GET', '/api/backups/:name', 'admin', (req, res, ctx) => {
+  const f = backupPath(ctx.params.name); if (!f) return send(res, 404, { error: 'Không tìm thấy' });
+  res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${ctx.params.name}"`, 'Content-Length': fs.statSync(f).size });
+  fs.createReadStream(f).pipe(res);
+});
+
 // Nhân viên
 const ROLES = ['admin', 'editor', 'viewer'];
 route('GET', '/api/users', 'admin', (req, res) => send(res, 200, db.prepare('SELECT id,username,name,role,created_at FROM users ORDER BY id').all()));
@@ -337,14 +394,23 @@ route('DELETE', '/api/users/:id', 'admin', (req, res, ctx) => {
   db.prepare('DELETE FROM users WHERE id=?').run(+ctx.params.id); send(res, 200, { ok: true });
 });
 
+const STARTED = Date.now();
+function health(res) {
+  try {
+    const n = db.prepare('SELECT COUNT(*) n FROM visits WHERE ts>=?').get(Date.now() - 3600e3).n;
+    const last = listBackups()[0];
+    send(res, 200, { ok: true, schema: SCHEMA_VERSION, uptime_s: Math.round((Date.now() - STARTED) / 1000), visits_last_hour: n, last_backup: last ? last.name : null });
+  } catch (e) { send(res, 500, { ok: false, error: e.message }); }
+}
+
 function serveStatic(req, res, pathname) {
-  const file = pathname === '/' ? '/index.html' : pathname;
+  const file = pathname === '/' ? '/index.html' : pathname === '/s.js' ? '/t.js' : pathname;
   const full = path.normalize(path.join(PUBLIC, file));
   if (!full.startsWith(PUBLIC)) { res.writeHead(403); return res.end(); }
   fs.stat(full, (err, st) => {
     const target = (!err && st.isFile()) ? full : path.join(PUBLIC, 'index.html');
     const headers = { 'Content-Type': MIME[path.extname(target)] || 'application/octet-stream' };
-    if (pathname === '/t.js') Object.assign(headers, { 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=3600' });
+    if (pathname === '/t.js' || pathname === '/s.js') Object.assign(headers, { 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=3600' });
     else headers['Cache-Control'] = 'no-cache';
     res.writeHead(200, headers); fs.createReadStream(target).pipe(res);
   });
@@ -353,7 +419,8 @@ function serveStatic(req, res, pathname) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   try {
-    if (url.pathname === '/api/collect') return await collect(req, res);
+    if (url.pathname === '/api/collect' || url.pathname === '/e') return await collect(req, res);
+    if (url.pathname === '/api/health') return health(res);
     const pub = /^\/api\/public\/([\w-]+)\/([a-z]+)(?:\/([^/]+))?$/.exec(url.pathname);
     if (pub) {
       if (req.method === 'OPTIONS') { res.writeHead(204, CORS); return res.end(); }
@@ -382,4 +449,16 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, process.env.HOST || '0.0.0.0', () => {
   console.log(`Domain Manager đang chạy: http://localhost:${PORT}`);
   startMonitor();
+  startBackups();
+  startAlerts();
+});
+// Dọn cú bấm chờ quá 1 ngày mà không có lượt vào tương ứng
+setInterval(() => { try { db.prepare('DELETE FROM pending_events WHERE ts<?').run(Date.now() - 864e5); } catch { } }, 3600e3).unref();
+// Tắt an toàn (Docker/Dokploy gửi SIGTERM khi deploy lại): ghi hết dữ liệu xuống đĩa
+let closing = false;
+for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => {
+  if (closing) return; closing = true;
+  console.log(`[${sig}] Đang dừng, ghi dữ liệu xuống đĩa...`);
+  server.close(() => { closeDb(); process.exit(0); });
+  setTimeout(() => { closeDb(); process.exit(0); }, 5000).unref();
 });

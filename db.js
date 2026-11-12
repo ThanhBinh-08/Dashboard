@@ -8,16 +8,24 @@ export const TZ = process.env.DASH_TZ || 'Asia/Ho_Chi_Minh';
 const dataDir = process.env.DATA_DIR || path.join(__dirname, 'data');
 fs.mkdirSync(dataDir, { recursive: true });
 
-export const db = new DatabaseSync(path.join(dataDir, 'dashboard.db'));
-db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
+export const DATA_DIR = dataDir;
+export const DB_FILE = path.join(dataDir, 'dashboard.db');
+export const db = new DatabaseSync(DB_FILE);
+db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
 
-const SCHEMA_VERSION = 3;
-if (db.prepare('PRAGMA user_version').get().user_version < SCHEMA_VERSION) {
-  // Nâng cấp từ bản thử nghiệm cũ: tạo lại toàn bộ bảng dữ liệu, giữ tài khoản người dùng.
-  db.exec(`PRAGMA foreign_keys = OFF;
-    DROP TABLE IF EXISTS events; DROP TABLE IF EXISTS visits; DROP TABLE IF EXISTS offers; DROP TABLE IF EXISTS stores;
-    DROP TABLE IF EXISTS imports; DROP TABLE IF EXISTS domains;
-    PRAGMA foreign_keys = ON;`);
+// KHÔNG BAO GIỜ xoá dữ liệu khi nâng cấp. Cấu trúc v3 là nền; các bản sau chỉ thêm bảng / cột (xem MIGRATIONS bên dưới).
+const BASE_VERSION = 3;
+const tableExists = (t) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(t);
+const columnsOf = (t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
+if (db.prepare('PRAGMA user_version').get().user_version < BASE_VERSION) {
+  // DB từ bản thử nghiệm rất cũ (trước v3) có cấu trúc khác: đổi tên bảng cũ để giữ lại, không xoá.
+  const legacy = { domains: 'site_key', stores: 'domain_id', visits: 'domain_id', events: 'visit_id', offers: 'okey', imports: 'kind' };
+  const suffix = '_legacy_' + Date.now();
+  db.exec('PRAGMA foreign_keys = OFF');
+  for (const [t, col] of Object.entries(legacy)) {
+    if (tableExists(t) && !columnsOf(t).includes(col)) { db.exec(`ALTER TABLE ${t} RENAME TO ${t}${suffix}`); console.log(`[db] Đã giữ bảng cũ ${t} thành ${t}${suffix}`); }
+  }
+  db.exec('PRAGMA foreign_keys = ON');
 }
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
@@ -128,8 +136,51 @@ CREATE TABLE IF NOT EXISTS imports (
   domain_id INTEGER, filename TEXT NOT NULL DEFAULT '', total INTEGER NOT NULL DEFAULT 0, added INTEGER NOT NULL DEFAULT 0,
   updated INTEGER NOT NULL DEFAULT 0, skipped INTEGER NOT NULL DEFAULT 0, detail TEXT NOT NULL DEFAULT '[]'
 );
-PRAGMA user_version = ${SCHEMA_VERSION};
 `);
+
+// ===== Migrations: chỉ THÊM, không xoá. Mỗi bước chạy được nhiều lần mà không hỏng. =====
+const addColumn = (t, col, def) => { if (!columnsOf(t).includes(col)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${col} ${def}`); };
+const MIGRATIONS = {
+  4: () => {
+    // Ghi nhận mọi cú bấm: tên nút, loại, thẻ HTML, trang
+    addColumn('events', 'kind', "TEXT NOT NULL DEFAULT ''");
+    addColumn('events', 'label', "TEXT NOT NULL DEFAULT ''");
+    addColumn('events', 'tag', "TEXT NOT NULL DEFAULT ''");
+    addColumn('events', 'page', "TEXT NOT NULL DEFAULT ''");
+    db.exec(`CREATE INDEX IF NOT EXISTS ix_e_dom_ts ON events(domain_id, ts);
+      CREATE TABLE IF NOT EXISTS pending_events (
+        id INTEGER PRIMARY KEY, visit_id TEXT NOT NULL, domain_id INTEGER NOT NULL, ts INTEGER NOT NULL, payload TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS ix_pe_visit ON pending_events(visit_id);
+      CREATE TABLE IF NOT EXISTS campaigns (
+        domain_id INTEGER NOT NULL REFERENCES domains(id) ON DELETE CASCADE, cid TEXT NOT NULL, name TEXT NOT NULL DEFAULT '',
+        updated_at INTEGER, PRIMARY KEY (domain_id, cid)
+      );
+      CREATE TABLE IF NOT EXISTS alerts_state (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '', ts INTEGER);`);
+    // Cú bấm ghi trước v4 chưa có loại: suy ra từ dữ liệu cũ (chỉ cập nhật, không xoá)
+    db.exec(`UPDATE events SET kind = CASE WHEN offer<>'' THEN 'offer' WHEN target<>'' THEN 'outbound' ELSE 'button' END
+      WHERE kind='' AND type='click'`);
+  },
+};
+export const SCHEMA_VERSION = Math.max(BASE_VERSION, ...Object.keys(MIGRATIONS).map(Number));
+{
+  let v = db.prepare('PRAGMA user_version').get().user_version;
+  if (v < BASE_VERSION) v = BASE_VERSION;
+  for (let n = v + 1; n <= SCHEMA_VERSION; n++) {
+    db.exec('BEGIN');
+    try { MIGRATIONS[n](); db.exec(`PRAGMA user_version = ${n}`); db.exec('COMMIT'); console.log(`[db] Đã nâng cấp cấu trúc lên v${n}`); }
+    catch (e) { db.exec('ROLLBACK'); throw e; }
+  }
+  // Đảm bảo bảng/cột của mọi bản tồn tại kể cả khi user_version bị đặt sai
+  for (const n of Object.keys(MIGRATIONS)) MIGRATIONS[n]();
+  if (db.prepare('PRAGMA user_version').get().user_version < SCHEMA_VERSION) db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+}
+
+/** Đóng DB an toàn khi tắt: ghi hết WAL vào file chính */
+export function closeDb() {
+  try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch { }
+  try { db.close(); } catch { }
+}
 
 const dayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' });
 export const dayOf = (ts) => dayFmt.format(new Date(ts));

@@ -27,7 +27,7 @@ Dữ liệu demo: `npm run demo` · xoá demo: `node seed-demo.js --remove`.
 1. Mục **Domain** (nút quả địa cầu cạnh ô chọn domain, hoặc menu avatar) → nhập domain, nhóm → **Thêm domain** (hoặc **Nhập nhiều domain**).
 2. Sao chép **Mã nhúng** và dán vào `<head>` của mọi trang:
    ```html
-   <script async src="https://DASHBOARD-CUA-BAN/t.js" data-site="SITE_KEY"></script>
+   <script async src="https://DASHBOARD-CUA-BAN/s.js" data-site="SITE_KEY"></script>
    ```
 3. (Khuyên dùng) đánh dấu cửa hàng & ưu đãi trong theme:
    ```html
@@ -59,6 +59,26 @@ GET /api/public/{SITE_KEY}/posts               /posts/{slug}
 GET /api/public/{SITE_KEY}/faqs                ?store={slug}
 ```
 
+## Ghi nhận mọi cú bấm
+
+Mã nhúng gửi về **mọi cú bấm** vào phần tử bấm được (nút, link, tab, menu, input submit, label, phần tử có con trỏ bàn tay…), kể cả chuột giữa. Mỗi cú bấm có tên nút (chữ trên nút / `aria-label` / `title`), loại (Ưu đãi, Link ra ngoài, Link nội bộ, Nút), trang và vị trí.
+- Đặt tên riêng: `data-cp-label="Tên"`. Bỏ qua một vùng: `data-cp-ignore`.
+- Cú bấm đến trước lượt vào (mạng lệch thứ tự) được giữ tạm và gắn lại; mất mạng thì trình duyệt lưu lại và gửi lần sau.
+- Xem ở **Bảng điều khiển → Nút được bấm nhiều nhất** (xuất CSV toàn bộ) và **Chi tiết cửa hàng → Theo nút bấm**.
+- Mã nhúng cũ (`/t.js`, `/api/collect`) vẫn chạy; nên đổi sang `/s.js` (ít bị trình chặn quảng cáo chặn hơn).
+
+## Không mất dữ liệu
+
+- **Dokploy / Docker**: dữ liệu nằm ở `/data`. Bắt buộc gắn **Volume** (Advanced → Volumes: tên `domain-manager-data`, mount path `/data`), nếu không mỗi lần deploy lại sẽ mất dữ liệu.
+- Nâng cấp phiên bản **không bao giờ xoá dữ liệu** (chỉ thêm bảng / cột).
+- **Sao lưu tự động** mỗi ngày vào `/data/backups` (giữ `BACKUP_KEEP` bản, mặc định 14). Admin: menu avatar → **Sao lưu dữ liệu** để tạo ngay / tải về. Nên tải về định kỳ hoặc bật Backups của Dokploy.
+- Khôi phục: dừng app → thay `/data/dashboard.db` bằng file sao lưu (xoá `dashboard.db-wal`, `dashboard.db-shm`) → khởi động lại.
+- `GET /api/health` để kiểm tra app (Dockerfile có sẵn HEALTHCHECK).
+
+## Cảnh báo Telegram
+
+Tạo bot với @BotFather, lấy token; nhắn cho bot rồi lấy chat id (vd qua `https://api.telegram.org/bot<TOKEN>/getUpdates`). Đặt `TELEGRAM_BOT_TOKEN` và `TELEGRAM_CHAT_ID` (nhiều chat cách nhau dấu phẩy). Báo khi domain sập / sống lại, SSL < 14 ngày, domain < 30 ngày, ngừng nhận dữ liệu 24 giờ — chỉ khi trạng thái thay đổi. Gửi thử ở trang Sao lưu dữ liệu.
+
 ## Triển khai lên VPS
 
 ```bash
@@ -68,8 +88,8 @@ sudo bash deploy/setup.sh digitalpartners.online email@cua-ban.com
 Script cài Node 24, pm2, Nginx, SSL; dữ liệu nằm ở `/var/lib/domain-manager`. Chạy lại script để cập nhật (dữ liệu giữ nguyên).
 
 - **Quốc gia**: đặt sau Cloudflare (header `CF-IPCountry`) **hoặc** `npm install geoip-lite`.
-- Biến môi trường: `PORT`, `HOST`, `DATA_DIR`, `DASH_TZ` (mặc định `Asia/Ho_Chi_Minh`), `MONITOR=0` (tắt kiểm tra uptime/SSL), `UPTIME_MINUTES` (mặc định 10).
-- Sao lưu: copy file `dashboard.db` trong `DATA_DIR`.
+- Biến môi trường: `PORT`, `HOST`, `DATA_DIR`, `DASH_TZ` (mặc định `Asia/Ho_Chi_Minh`), `MONITOR=0` (tắt kiểm tra uptime/SSL), `UPTIME_MINUTES` (mặc định 10), `BACKUP_KEEP` (mặc định 14), `BACKUP=0` (tắt sao lưu tự động), `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `ADMIN_USER`, `ADMIN_PASS` (chỉ dùng lần chạy đầu).
+- Sao lưu: xem mục **Không mất dữ liệu** ở trên (đừng copy riêng `dashboard.db` khi app đang chạy — dùng bản trong `backups/`).
 
 ## Cấu trúc
 
@@ -80,6 +100,9 @@ Script cài Node 24, pm2, Nginx, SSL; dữ liệu nằm ở `/var/lib/domain-man
 | `stats.js` | Truy vấn thống kê |
 | `resources.js` | CRUD dữ liệu & nội dung, import CSV, API công khai |
 | `monitor.js` | Kiểm tra online, SSL, ngày hết hạn domain (RDAP) |
-| `public/t.js` | Script nhúng vào các website |
+| `public/t.js` | Script nhúng vào các website (phục vụ ở `/s.js` và `/t.js`) |
+| `backup.js` | Sao lưu tự động |
+| `alerts.js` | Cảnh báo Telegram |
+| `docs/SUPERPLAN.md` | Kế hoạch tổng, trạng thái từng nhiệm vụ |
 | `public/app.js`, `index.html`, `style.css` | Giao diện |
 | `seed-demo.js` | Tạo / xoá dữ liệu demo |

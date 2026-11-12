@@ -34,7 +34,7 @@ function where(f, { storeOnly = false } = {}) {
   else if (f.country) { w.push('v.country=?'); p.push(f.country); }
   return { w: w.join(' AND '), p };
 }
-const daysBetween = (from, to) => { const out = []; for (let d = to; d >= from && out.length < 400; d = addDays(d, -1)) out.push(d); return out; };
+const daysBetween = (from, to) => { const out = []; for (let d = to; d >= from && out.length < 2000; d = addDays(d, -1)) out.push(d); return out; };
 const GRP = 'COUNT(*) visits, COALESCE(SUM(v.entry),0) entries, COALESCE(SUM(v.clicks>0),0) clicked, COALESCE(SUM(v.clicks),0) clicks, COALESCE(SUM(v.copies),0) copies';
 
 /** Điều kiện "ưu đãi đang chạy": đang bật, trong thời hạn, và (nhập tay hoặc vừa thấy trên trang trong 7 ngày) */
@@ -87,12 +87,14 @@ export function storeDetail(id, q) {
     store: s, from: f.from, to: f.to, kpi,
     byPosition: all(`SELECT e.position, COUNT(DISTINCT CASE WHEN e.type='click' THEN e.visit_id END) clicked, SUM(e.type='click') clicks, SUM(e.type='copy') copies
                      FROM events e JOIN visits v ON v.id=e.visit_id WHERE ${w} GROUP BY e.position ORDER BY clicks DESC`),
-    bySource: all(`SELECT v.channel, v.source, ${GRP} FROM visits v WHERE ${w} GROUP BY v.channel, v.source ORDER BY visits DESC LIMIT 50`),
-    byCountry: all(`SELECT v.country, ${GRP} FROM visits v WHERE ${w} GROUP BY v.country ORDER BY visits DESC LIMIT 100`),
-    byKeyword: all(`SELECT v.campaign, v.keyword, ${GRP} FROM visits v WHERE ${w} AND v.keyword<>'' GROUP BY v.campaign, v.keyword ORDER BY visits DESC LIMIT 100`),
+    bySource: all(`SELECT v.channel, v.source, ${GRP} FROM visits v WHERE ${w} GROUP BY v.channel, v.source ORDER BY visits DESC LIMIT 5000`),
+    byCountry: all(`SELECT v.country, ${GRP} FROM visits v WHERE ${w} GROUP BY v.country ORDER BY visits DESC`),
+    byKeyword: all(`SELECT COALESCE(NULLIF(cn.name,''), v.campaign) campaign, v.campaign cid, v.keyword, ${GRP} FROM visits v LEFT JOIN campaigns cn ON cn.domain_id=v.domain_id AND cn.cid=v.campaign WHERE ${w} AND v.keyword<>'' GROUP BY v.campaign, v.keyword ORDER BY visits DESC LIMIT 5000`),
     byOffer: all(`SELECT e.offer okey, COALESCE(o.title,'') title, COALESCE(o.type,'') type, SUM(e.type='click') clicks, SUM(e.type='copy') copies
                   FROM events e JOIN visits v ON v.id=e.visit_id LEFT JOIN offers o ON o.domain_id=e.domain_id AND o.okey=e.offer
-                  WHERE ${w} AND e.offer<>'' GROUP BY e.offer ORDER BY copies DESC, clicks DESC LIMIT 100`),
+                  WHERE ${w} AND e.offer<>'' GROUP BY e.offer ORDER BY copies DESC, clicks DESC LIMIT 5000`),
+    byButton: all(`SELECT e.kind, CASE WHEN e.label<>'' THEN e.label WHEN e.target<>'' THEN e.target ELSE e.position END label, COUNT(*) clicks, COUNT(DISTINCT e.visit_id) clicked
+                   FROM events e JOIN visits v ON v.id=e.visit_id WHERE ${w} AND e.type='click' GROUP BY 1, 2 ORDER BY clicks DESC LIMIT 5000`),
     byDevice: all(`SELECT v.device, ${GRP} FROM visits v WHERE ${w} GROUP BY v.device ORDER BY visits DESC`),
     byDay: daysBetween(f.from, f.to).map((d) => m.get(d) || { day: d, visits: 0, entries: 0, clicked: 0, clicks: 0, copies: 0 }),
   };
@@ -102,10 +104,10 @@ export function keywords(q) {
   const f = parseFilter(q); const { w, p } = where(f);
   return {
     from: f.from, to: f.to,
-    rows: db.prepare(`SELECT v.store_id, COALESCE(s.name,'') store_name, COALESCE(s.slug,'') slug, d.host, v.campaign, v.keyword,
+    rows: db.prepare(`SELECT v.store_id, COALESCE(s.name,'') store_name, COALESCE(s.slug,'') slug, d.host, COALESCE(NULLIF(cn.name,''), v.campaign) campaign, v.campaign cid, v.keyword,
         COUNT(*) visits, SUM(v.clicks>0) clicked, SUM(v.clicks) clicks, SUM(v.copies) copies
-      FROM visits v JOIN domains d ON d.id=v.domain_id LEFT JOIN stores s ON s.id=v.store_id
-      WHERE ${w} AND v.keyword<>'' GROUP BY v.domain_id, v.store_id, v.campaign, v.keyword ORDER BY visits DESC LIMIT 5000`).all(...p),
+      FROM visits v JOIN domains d ON d.id=v.domain_id LEFT JOIN stores s ON s.id=v.store_id LEFT JOIN campaigns cn ON cn.domain_id=v.domain_id AND cn.cid=v.campaign
+      WHERE ${w} AND v.keyword<>'' GROUP BY v.domain_id, v.store_id, v.campaign, v.keyword ORDER BY visits DESC LIMIT 100000`).all(...p),
   };
 }
 
@@ -147,4 +149,20 @@ export function overview(q) {
 export function countries(q) {
   const f = { ...parseFilter(q), channel: 'all', country: '' }; const { w, p } = where(f);
   return db.prepare(`SELECT v.country, COUNT(*) visits FROM visits v WHERE ${w} GROUP BY v.country ORDER BY visits DESC`).all(...p);
+}
+
+/** Mọi cú bấm trên domain (cả trang không phải cửa hàng): theo nút + trang. ?limit=0 = tất cả */
+export function clicksReport(q) {
+  const f = parseFilter(q); const { w, p } = where(f);
+  const lim = q.get('limit') === '0' ? 200000 : Math.min(Math.max(+q.get('limit') || 20, 1), 200000);
+  const LABEL = "CASE WHEN e.label<>'' THEN e.label WHEN e.target<>'' THEN e.target ELSE e.position END";
+  return {
+    from: f.from, to: f.to,
+    total: db.prepare(`SELECT COUNT(*) clicks, COUNT(DISTINCT e.visit_id) clicked FROM events e JOIN visits v ON v.id=e.visit_id WHERE ${w} AND e.type='click'`).get(...p),
+    byKind: db.prepare(`SELECT e.kind, COUNT(*) clicks FROM events e JOIN visits v ON v.id=e.visit_id WHERE ${w} AND e.type='click' GROUP BY e.kind ORDER BY clicks DESC`).all(...p),
+    rows: db.prepare(`SELECT e.kind, ${LABEL} label, CASE WHEN e.page<>'' THEN e.page ELSE v.path END page, d.host, COALESCE(s.name,'') store_name,
+        COUNT(*) clicks, COUNT(DISTINCT e.visit_id) clicked, MAX(e.ts) last_ts
+      FROM events e JOIN visits v ON v.id=e.visit_id JOIN domains d ON d.id=v.domain_id LEFT JOIN stores s ON s.id=v.store_id
+      WHERE ${w} AND e.type='click' GROUP BY e.kind, 2, 3, d.id ORDER BY clicks DESC LIMIT ?`).all(...p, lim),
+  };
 }

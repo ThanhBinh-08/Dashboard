@@ -5,3 +5,4 @@ data/
 *.tgz
 img/
 .env
+.claude/settings.local.json

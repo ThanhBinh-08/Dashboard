@@ -298,3 +298,22 @@ code { font-family: ui-monospace, Consolas, monospace; background: var(--g100); 
 .acts.wrap { white-space: normal; width: 190px; line-height: 2; }
 .acts.wrap .act { margin-left: 0; margin-right: 10px; }
 .form label > .hint { order: 1; }
+
+/* superplan: biểu đồ, bảng cuộn, loại nút */
+:root { --c1: #d97706; --c2: #2563eb; --c3: #16a34a; }
+.scroll-box { max-height: 360px; overflow: auto; border-bottom: 1px solid var(--line2); }
+.scroll-box thead th { position: sticky; top: 0; background: #fff; z-index: 1; }
+.chart-wrap { padding: 12px 16px 8px; }
+.chart { width: 100%; height: 220px; display: block; overflow: visible; }
+.chart .g { stroke: var(--g100); stroke-width: 1; }
+.chart text { font-size: 11px; fill: var(--g400); }
+.chart path { fill: none; stroke-width: 2.2; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.chart .l1 { stroke: var(--c1); } .chart .l2 { stroke: var(--c2); } .chart .l3 { stroke: var(--c3); stroke-dasharray: 5 4; }
+.chart .d1 { fill: #fff; stroke: var(--c1); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.legend { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--g500); flex-wrap: wrap; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-left: 8px; }
+.tag.k-offer { background: var(--p100); color: var(--p700); }
+.tag.k-outbound { background: #dbeafe; color: #1d4ed8; }
+.tag.k-internal { background: var(--g100); color: var(--g600); }
+.tag.k-button { background: #ede9fe; color: #6d28d9; }
+.tag.k-other { background: var(--g100); color: var(--g500); }
