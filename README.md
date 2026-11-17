@@ -67,6 +67,27 @@ Mã nhúng gửi về **mọi cú bấm** vào phần tử bấm được (nút,
 - Xem ở **Bảng điều khiển → Nút được bấm nhiều nhất** (xuất CSV toàn bộ) và **Chi tiết cửa hàng → Theo nút bấm**.
 - Mã nhúng cũ (`/t.js`, `/api/collect`) vẫn chạy; nên đổi sang `/s.js` (ít bị trình chặn quảng cáo chặn hơn).
 
+## Thiết bị
+
+Trang **Thiết bị**: lượt vào / tỉ lệ bấm / copy mã theo điện thoại, máy tính, máy tính bảng; hệ điều hành; trình duyệt; tổ hợp thiết bị × HĐH × trình duyệt; thiết bị × kênh; biểu đồ theo ngày; so sánh từng cửa hàng; 100 lượt vào gần nhất. Ô **Thiết bị** trên thanh lọc áp dụng cho mọi trang thống kê và chi tiết cửa hàng.
+
+## IP truy cập & Click tặc
+
+Trang **IP truy cập**: mỗi IP đến từ đâu (quốc gia, vùng, thành phố), số lượt vào, lượt từ quảng cáo, lượt bấm và **vị trí bấm nhiều nhất**. Bấm một IP để xem mọi vị trí đã bấm, nguồn truy cập, thiết bị, nhật ký từng cú bấm và các lượt vào. Xuất CSV được.
+
+- **Click tặc**: một IP bấm **cùng một vị trí** (cùng domain + trang + nút) từ `FRAUD_CLICKS` lần (mặc định 10) trong `FRAUD_MINUTES` phút (mặc định 10) sẽ tự bị đánh dấu, kể cả khi tải lại trang nhiều lần. Có cảnh báo Telegram nếu đã cấu hình.
+- Admin / biên tập viên đánh dấu tay **Click tặc** hoặc **An toàn** (IP an toàn không bị tự đánh dấu nữa), hoặc bỏ đánh dấu để hệ thống xét lại.
+- IP lấy từ header `CF-Connecting-IP` / `X-Forwarded-For`. Quốc gia từ `CF-IPCountry`; thành phố / vùng cần bật Cloudflare **Rules → Transform Rules → Managed Transforms → Add visitor location headers** (hoặc dùng geoip-lite).
+- Chỉ lượt vào từ bản này trở đi mới có IP; dữ liệu cũ không có.
+
+## Kế hoạch từ khoá (giống Keyword Planner)
+
+Trang **Kế hoạch từ khoá**: *Tìm từ khoá mới* (từ khoá gốc / URL) và *Kiểm tra lượng tìm kiếm* (danh sách tới 2.000 từ; mở nhanh từ trang Từ khoá hoặc Chi tiết cửa hàng). Mỗi dòng có thêm lượt vào / tỉ lệ bấm / copy mã của chính bạn. Kết quả lưu đệm 24 giờ.
+
+- Chưa cấu hình: dùng gợi ý tìm kiếm Google (không có lượng tìm kiếm).
+- Có cấu hình Google Ads API: lượng tìm TB/tháng, xu hướng 12 tháng, thay đổi 3 tháng / năm, cạnh tranh, giá thầu đầu trang. Biến môi trường:
+  `GOOGLE_ADS_DEVELOPER_TOKEN`, `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET`, `GOOGLE_ADS_REFRESH_TOKEN` (scope `adwords`), `GOOGLE_ADS_CUSTOMER_ID`, tuỳ chọn `GOOGLE_ADS_LOGIN_CUSTOMER_ID` (MCC), `GOOGLE_ADS_CURRENCY`, `GOOGLE_ADS_API_VERSION` (mặc định `v26`), `KW_CACHE_HOURS`.
+
 ## Không mất dữ liệu
 
 - **Dokploy / Docker**: dữ liệu nằm ở `/data`. Bắt buộc gắn **Volume** (Advanced → Volumes: tên `domain-manager-data`, mount path `/data`), nếu không mỗi lần deploy lại sẽ mất dữ liệu.

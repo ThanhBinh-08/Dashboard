@@ -17,7 +17,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 svg { flex: none; }
 
 /* ---------- inputs ---------- */
-select, input[type=text], input[type=password], input[type=date], input[type=number], input[type=search], input:not([type]), textarea {
+select, input[type=text], input[type=password], input[type=date], input[type=number], input[type=search], input[type=url], input[type=email], input:not([type]), textarea {
   height: 36px; border: 0; border-radius: 8px; padding: 0 12px; background: #fff; outline: none; min-width: 0;
   box-shadow: 0 1px 2px rgba(0,0,0,.05), inset 0 0 0 1px var(--ring); transition: box-shadow .1s;
 }
@@ -78,7 +78,7 @@ h1.page { font-size: 24px; margin: 0 0 24px; }
 
 /* ---------- filter bar ---------- */
 .filters { display: flex; flex-wrap: wrap; gap: 16px 24px; margin-bottom: 24px; }
-.filters .f { display: grid; gap: 8px; width: 280px; max-width: 100%; }
+.filters .f { display: grid; gap: 8px; flex: 1 1 200px; max-width: 280px; min-width: 0; }
 .filters .f > span { font-weight: 500; font-size: 14px; line-height: 20px; }
 
 /* ---------- card / table ---------- */
@@ -317,3 +317,34 @@ code { font-family: ui-monospace, Consolas, monospace; background: var(--g100); 
 .tag.k-internal { background: var(--g100); color: var(--g600); }
 .tag.k-button { background: #ede9fe; color: #6d28d9; }
 .tag.k-other { background: var(--g100); color: var(--g500); }
+
+/* ===== Thiết bị & Kế hoạch từ khoá ===== */
+.note { background: var(--p50); color: var(--g700); border: 1px solid var(--p100); border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; font-size: 14px; line-height: 1.5; }
+.note.ok { background: var(--ok50); border-color: #bbf7d0; }
+.note a { color: var(--info600); cursor: pointer; }
+.share { display: flex; align-items: center; gap: 8px; } .share .bar-track { flex: 1; } .share span { font-size: 12px; color: var(--g500); min-width: 34px; text-align: right; }
+.dev-kpi { cursor: pointer; transition: box-shadow .15s; } .dev-kpi:hover { box-shadow: 0 0 0 1px var(--p400); } .dev-kpi.on { box-shadow: 0 0 0 2px var(--p600); }
+.kpi .v small { font-size: 13px; font-weight: 500; color: var(--g500); }
+.spark { display: block; } .spark polyline { fill: none; stroke: var(--c2); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.comp { display: inline-block; font-size: 12px; font-weight: 500; padding: 2px 6px; border-radius: 6px; background: var(--g100); color: var(--g600); }
+.comp.c-LOW { background: var(--ok50); color: var(--ok600); } .comp.c-MEDIUM { background: var(--p50); color: var(--p600); } .comp.c-HIGH { background: var(--bad50); color: var(--bad600); }
+.pl-form .tabs { margin-bottom: 14px; }
+.pl-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; align-items: start; }
+input:disabled { background: var(--g50); color: var(--g400); cursor: not-allowed; }
+.dev-tbl td:first-child { white-space: nowrap; }
+.pl-grid textarea { width: 100%; font-family: inherit; resize: vertical; }
+.pl-side { display: flex; flex-direction: column; gap: 10px; }
+.pl-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.pl-actions { display: flex; align-items: center; gap: 14px; margin-top: 14px; flex-wrap: wrap; }
+.pl-actions .chk { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--g600); flex-direction: row; }
+tr.pl-own td:first-child { box-shadow: inset 3px 0 0 var(--ok600); }
+@media (max-width: 800px) { .pl-grid, .pl-row { grid-template-columns: 1fr; } }
+
+/* ===== IP truy cập & Click tặc ===== */
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+tr.fraud td:first-child { box-shadow: inset 3px 0 0 var(--bad600); }
+.note.bad { background: var(--bad50); border-color: #fecaca; }
+.chk-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--g700); cursor: pointer; }
+.ip-acts { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 16px; }
+.nowrap-td { white-space: nowrap; }
+.store-cell .sub.clip { display: block; }

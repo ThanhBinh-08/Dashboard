@@ -59,10 +59,14 @@ Trạng thái: `[x]` xong · `[ ]` chưa làm · `(cấu hình)` = việc làm t
 | # | Nhiệm vụ | Trạng thái |
 |---|---|---|
 | 5.1 | Biểu đồ đường Lượt vào / Lượt bấm / Copy mã theo ngày trên Bảng điều khiển | [x] |
+| 5.2 | Trang **Thiết bị** + bộ lọc thiết bị cho mọi trang thống kê (thiết bị, HĐH, trình duyệt, theo ngày, theo cửa hàng) | [x] |
+| 5.3 | Trang **Kế hoạch từ khoá**: tìm ý tưởng / kiểm tra lượng tìm kiếm (Google Ads API, dự phòng gợi ý Google), ghép số liệu của mình | [x] |
+| 5.4 | (cấu hình) Đặt biến `GOOGLE_ADS_*` để có lượng tìm kiếm, cạnh tranh, giá thầu | [ ] |
+| 5.5 | Trang **IP truy cập**: IP nào bấm vào vị trí nào, đến từ đâu; tự đánh dấu **Click tặc** (cùng một vị trí ≥ 10 lần / 10 phút), đánh dấu tay Click tặc / An toàn, cảnh báo Telegram | [x] |
+| 5.6 | (cấu hình) Cloudflare → Managed Transforms → **Add visitor location headers** để có thành phố / vùng của IP | [ ] |
 
 ## Để sau (chưa làm)
 
-- Lọc theo thiết bị / trình duyệt trên các trang thống kê.
 - Nhật ký thao tác (ai sửa / xoá gì).
 - Khôi phục từ bản sao lưu ngay trên giao diện (hiện khôi phục bằng cách thay file — xem README).
 - Kết nối Google Ads API để lấy chi phí, chuyển đổi.

@@ -161,6 +161,24 @@ const MIGRATIONS = {
     db.exec(`UPDATE events SET kind = CASE WHEN offer<>'' THEN 'offer' WHEN target<>'' THEN 'outbound' ELSE 'button' END
       WHERE kind='' AND type='click'`);
   },
+  5: () => {
+    // Kế hoạch từ khoá: bộ nhớ đệm kết quả (đỡ tốn quota Google Ads API) + chỉ mục thiết bị / từ khoá
+    db.exec(`CREATE TABLE IF NOT EXISTS kw_cache (key TEXT PRIMARY KEY, ts INTEGER NOT NULL, data TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS ix_v_day_device ON visits(day, device);
+      CREATE INDEX IF NOT EXISTS ix_v_keyword ON visits(keyword);`);
+  },
+  6: () => {
+    // IP truy cập: IP + nơi đến của mỗi lượt vào, và danh sách IP bị đánh dấu Click tặc / An toàn
+    addColumn('visits', 'ip', "TEXT NOT NULL DEFAULT ''");
+    addColumn('visits', 'region', "TEXT NOT NULL DEFAULT ''");
+    addColumn('visits', 'city', "TEXT NOT NULL DEFAULT ''");
+    db.exec(`CREATE INDEX IF NOT EXISTS ix_v_ip_ts ON visits(ip, ts);
+      CREATE TABLE IF NOT EXISTS ip_flags (
+        ip TEXT PRIMARY KEY, status TEXT NOT NULL, auto INTEGER NOT NULL DEFAULT 1, reason TEXT NOT NULL DEFAULT '',
+        domain_id INTEGER, page TEXT NOT NULL DEFAULT '', label TEXT NOT NULL DEFAULT '', clicks INTEGER NOT NULL DEFAULT 0,
+        ts INTEGER NOT NULL, username TEXT NOT NULL DEFAULT ''
+      );`);
+  },
 };
 export const SCHEMA_VERSION = Math.max(BASE_VERSION, ...Object.keys(MIGRATIONS).map(Number));
 {

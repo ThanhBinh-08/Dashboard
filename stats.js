@@ -4,6 +4,7 @@ import { db, todayStr, addDays } from './db.js';
 export const OFFER_SEEN_DAYS = 7;
 export const ONLINE_MS = 5 * 60e3;
 const CHANNELS = ['ads', 'organic', 'direct', 'other'];
+export const DEVICES = ['mobile', 'desktop', 'tablet'];
 const str = (v, n = 200) => (v == null ? '' : String(v)).trim().slice(0, n);
 
 export function rangeOf(q) {
@@ -21,9 +22,9 @@ export function rangeOf(q) {
 }
 export function parseFilter(q) {
   const { from, to } = rangeOf(q);
-  return { from, to, domain: +q.get('domain') || 0, store: +q.get('store') || 0, group: str(q.get('group'), 60), channel: q.get('channel') || 'all', country: str(q.get('country'), 2).toUpperCase() };
+  return { from, to, domain: +q.get('domain') || 0, store: +q.get('store') || 0, group: str(q.get('group'), 60), channel: q.get('channel') || 'all', country: str(q.get('country'), 2).toUpperCase(), device: DEVICES.includes(q.get('device')) ? q.get('device') : '' };
 }
-function where(f, { storeOnly = false } = {}) {
+export function where(f, { storeOnly = false } = {}) {
   const w = ['v.day BETWEEN ? AND ?'], p = [f.from, f.to];
   if (f.domain) { w.push('v.domain_id=?'); p.push(f.domain); }
   else if (f.group) { w.push('v.domain_id IN (SELECT id FROM domains WHERE category=?)'); p.push(f.group); }
@@ -32,6 +33,7 @@ function where(f, { storeOnly = false } = {}) {
   if (CHANNELS.includes(f.channel)) { w.push('v.channel=?'); p.push(f.channel); }
   if (f.country === '--') w.push("v.country=''");
   else if (f.country) { w.push('v.country=?'); p.push(f.country); }
+  if (f.device) { w.push('v.device=?'); p.push(f.device); }
   return { w: w.join(' AND '), p };
 }
 const daysBetween = (from, to) => { const out = []; for (let d = to; d >= from && out.length < 2000; d = addDays(d, -1)) out.push(d); return out; };
@@ -165,4 +167,43 @@ export function clicksReport(q) {
       FROM events e JOIN visits v ON v.id=e.visit_id JOIN domains d ON d.id=v.domain_id LEFT JOIN stores s ON s.id=v.store_id
       WHERE ${w} AND e.type='click' GROUP BY e.kind, 2, 3, d.id ORDER BY clicks DESC LIMIT ?`).all(...p, lim),
   };
+}
+
+/** Quan sát thiết bị: loại thiết bị, trình duyệt, hệ điều hành, tổ hợp, theo ngày, theo cửa hàng */
+export function devices(q) {
+  const f = parseFilter(q); const { w, p } = where(f);
+  const all = (sql, ...extra) => db.prepare(sql).all(...p, ...extra);
+  const m = new Map();
+  for (const r of all(`SELECT v.day, v.device, COUNT(*) visits, SUM(v.clicks>0) clicked FROM visits v WHERE ${w} GROUP BY v.day, v.device`)) {
+    const o = m.get(r.day) || { day: r.day }; o[r.device || 'unknown'] = r.visits; o[(r.device || 'unknown') + '_clicked'] = r.clicked; m.set(r.day, o);
+  }
+  return {
+    from: f.from, to: f.to,
+    kpi: db.prepare(`SELECT ${GRP} FROM visits v WHERE ${w}`).get(...p),
+    byDevice: all(`SELECT v.device, ${GRP}, COUNT(DISTINCT v.visitor) visitors FROM visits v WHERE ${w} GROUP BY v.device ORDER BY visits DESC`),
+    byBrowser: all(`SELECT v.browser, ${GRP} FROM visits v WHERE ${w} GROUP BY v.browser ORDER BY visits DESC`),
+    byOS: all(`SELECT v.os, ${GRP} FROM visits v WHERE ${w} GROUP BY v.os ORDER BY visits DESC`),
+    combos: all(`SELECT v.device, v.os, v.browser, ${GRP} FROM visits v WHERE ${w} GROUP BY v.device, v.os, v.browser ORDER BY visits DESC LIMIT 500`),
+    byChannel: all(`SELECT v.device, v.channel, ${GRP} FROM visits v WHERE ${w} GROUP BY v.device, v.channel ORDER BY visits DESC`),
+    byStore: all(`SELECT s.id, s.name, s.slug, d.host, COUNT(*) visits,
+        SUM(v.device='mobile') m_visits, SUM(v.device='mobile' AND v.clicks>0) m_clicked, SUM(CASE WHEN v.device='mobile' THEN v.copies ELSE 0 END) m_copies,
+        SUM(v.device='desktop') d_visits, SUM(v.device='desktop' AND v.clicks>0) d_clicked, SUM(CASE WHEN v.device='desktop' THEN v.copies ELSE 0 END) d_copies,
+        SUM(v.device='tablet') t_visits, SUM(v.device='tablet' AND v.clicks>0) t_clicked
+      FROM visits v JOIN stores s ON s.id=v.store_id JOIN domains d ON d.id=v.domain_id WHERE ${w} GROUP BY s.id ORDER BY visits DESC LIMIT 1000`),
+    byDay: daysBetween(f.from, f.to).map((d) => m.get(d) || { day: d }),
+    recent: db.prepare(`SELECT v.ts, v.device, v.os, v.browser, v.country, v.channel, v.keyword, v.path, v.clicks, v.copies, d.host, COALESCE(s.name,'') store_name
+      FROM visits v JOIN domains d ON d.id=v.domain_id LEFT JOIN stores s ON s.id=v.store_id WHERE ${w} ORDER BY v.ts DESC LIMIT 100`).all(...p),
+  };
+}
+
+/** Số liệu của chính mình cho một danh sách từ khoá (dùng ở Kế hoạch từ khoá) */
+export function ownKeywordStats(q, list) {
+  const f = parseFilter(q); const { w, p } = where(f);
+  const out = new Map(); if (!list.length) return out;
+  for (let i = 0; i < list.length; i += 500) {
+    const part = list.slice(i, i + 500);
+    const rows = db.prepare(`SELECT v.keyword, ${GRP}, COUNT(DISTINCT v.store_id) stores, SUM(v.device='mobile') mobile FROM visits v WHERE ${w} AND v.keyword IN (${part.map(() => '?').join(',')}) GROUP BY v.keyword`).all(...p, ...part);
+    rows.forEach((r) => out.set(r.keyword, r));
+  }
+  return out;
 }

@@ -7,7 +7,9 @@ import { db, dayOf, tx, slugify, closeDb, SCHEMA_VERSION } from './db.js';
 import { startBackups, createBackup, listBackups, backupPath } from './backup.js';
 import { startAlerts, sendTelegram, alertsEnabled } from './alerts.js';
 import { startMonitor, checkDomain } from './monitor.js';
-import { storePerformance, storeDetail, keywords, overview, countries, clicksReport } from './stats.js';
+import { storePerformance, storeDetail, keywords, overview, countries, clicksReport, devices, ownKeywordStats } from './stats.js';
+import { planKeywords, adsConfigured, GEO, LANG } from './kwplanner.js';
+import { ipReport, ipDetail, checkFraud, setFlag } from './ipstats.js';
 import { RES, listRes, getRes, createRes, updateRes, deleteRes, optionsFor, parseCSV, importStores, importOffers, publicApi } from './resources.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -97,12 +99,26 @@ function osOf(ua) {
   if (/Windows/.test(ua)) return 'Windows'; if (/iPhone|iPad|iPod/.test(ua)) return 'iOS'; if (/Android/.test(ua)) return 'Android';
   if (/CrOS/.test(ua)) return 'ChromeOS'; if (/Mac OS X|Macintosh/.test(ua)) return 'macOS'; if (/Linux/.test(ua)) return 'Linux'; return 'Khác';
 }
-function clientIP(req) { return str((req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for'] || '').split(',')[0], 64) || req.socket.remoteAddress || ''; }
-function countryOf(req) {
-  const h = req.headers['cf-ipcountry'] || req.headers['x-vercel-ip-country'] || req.headers['cloudfront-viewer-country'] || req.headers['x-country-code'];
-  if (h && /^[A-Z]{2}$/i.test(h) && !/^(XX|T1)$/i.test(h)) return h.toUpperCase();
-  if (geoip) { const r = geoip.lookup(clientIP(req).replace(/^::ffff:/, '')); if (r && r.country) return r.country; }
-  return '';
+function clientIP(req) { return (str((req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for'] || '').split(',')[0], 64) || req.socket.remoteAddress || '').replace(/^::ffff:/, '').toLowerCase(); }
+// Tên thành phố / vùng trong header có thể là UTF-8 (Node đọc header theo latin1) hoặc mã hoá %XX
+function hdrText(v) {
+  v = str(Array.isArray(v) ? v[0] : v, 120); if (!v) return '';
+  try { if (/%[0-9a-f]{2}/i.test(v)) v = decodeURIComponent(v); } catch { }
+  const u = Buffer.from(v, 'latin1').toString('utf8');
+  return /[\x80-\xff]/.test(v) && !u.includes(String.fromCharCode(0xfffd)) ? u : v;
+}
+/** IP + nơi đến: header Cloudflare (CF-IPCountry, CF-Region, CF-IPCity) hoặc geoip-lite nếu đã cài */
+function geoOf(req) {
+  const ip = clientIP(req), hd = req.headers;
+  const h = hd['cf-ipcountry'] || hd['x-vercel-ip-country'] || hd['cloudfront-viewer-country'] || hd['x-country-code'];
+  let country = h && /^[A-Z]{2}$/i.test(h) && !/^(XX|T1)$/i.test(h) ? h.toUpperCase() : '';
+  let region = hdrText(hd['cf-region'] || hd['x-vercel-ip-country-region'] || hd['cloudfront-viewer-country-region-name']);
+  let city = hdrText(hd['cf-ipcity'] || hd['x-vercel-ip-city'] || hd['cloudfront-viewer-city']);
+  if (geoip && (!country || !city)) {
+    const r = geoip.lookup(ip);
+    if (r) { country = country || r.country || ''; region = region || r.region || ''; city = city || r.city || ''; }
+  }
+  return { ip, country, region, city };
 }
 const pathRe = new Map();
 function storeFromPath(tpl, pathname) {
@@ -122,9 +138,9 @@ const Q = {
   storeGet: db.prepare('SELECT * FROM stores WHERE domain_id=? AND slug=?'),
   storeIns: db.prepare("INSERT INTO stores(domain_id,slug,name,url,page_url,source,created_at,updated_at) VALUES(?,?,?,?,?,'tracker',?,?)"),
   storeUpd: db.prepare('UPDATE stores SET name=?, url=?, page_url=? WHERE id=?'),
-  visitIns: db.prepare(`INSERT OR IGNORE INTO visits(id,domain_id,store_id,visitor,ts,day,path,channel,source,medium,campaign,keyword,country,device,browser,os,entry,referrer)
-                        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
-  visitGet: db.prepare('SELECT id,domain_id,store_id,clicks,copies FROM visits WHERE id=?'),
+  visitIns: db.prepare(`INSERT OR IGNORE INTO visits(id,domain_id,store_id,visitor,ts,day,path,channel,source,medium,campaign,keyword,country,device,browser,os,entry,referrer,ip,region,city)
+                        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+  visitGet: db.prepare('SELECT id,domain_id,store_id,clicks,copies,ip,path FROM visits WHERE id=?'),
   offerSeen: db.prepare(`INSERT INTO offers(domain_id,store_id,okey,title,type,status,source,last_seen,created_at,updated_at) VALUES(?,?,?,?,?,'active','tracker',?,?,?)
                          ON CONFLICT(domain_id,okey) DO UPDATE SET last_seen=excluded.last_seen,
                          store_id=COALESCE(offers.store_id, excluded.store_id),
@@ -146,7 +162,7 @@ function handlePV(dom, d, req) {
   const slug = slugify(str(s.slug, 120) || storeFromPath(dom.store_path, u.pathname));
   const land = d.l && typeof d.l === 'object' ? d.l : { u: d.u, r: d.r };
   const a = classify(safeURL(land.u) || u, str(land.r, 1000));
-  const ref = str(d.r, 1000), ua = req.headers['user-agent'] || '';
+  const ref = str(d.r, 1000), ua = req.headers['user-agent'] || '', geo = geoOf(req);
   let p = u.pathname; try { p = decodeURIComponent(p); } catch { }
   tx(() => {
     let storeId = null;
@@ -161,7 +177,7 @@ function handlePV(dom, d, req) {
       }
     }
     Q.visitIns.run(str(d.v, 40), dom.id, storeId, str(d.vid, 40), now, dayOf(now), str(p, 300) || '/', a.channel, a.source, a.medium, a.campaign, a.keyword,
-      countryOf(req), deviceOf(ua), browserOf(ua), osOf(ua), hostOf(ref) !== hostOf(u.href) ? 1 : 0, ref);
+      geo.country, deviceOf(ua), browserOf(ua), osOf(ua), hostOf(ref) !== hostOf(u.href) ? 1 : 0, ref, str(geo.ip, 64), geo.region, geo.city);
     if (Array.isArray(d.o)) for (const o of d.o.slice(0, 100)) {
       const k = str(o && o.id, 100); if (k) Q.offerSeen.run(dom.id, storeId, k, str(o.title, 300), o.type === 'deal' ? 'deal' : 'code', now, now, now);
     }
@@ -189,11 +205,14 @@ function handleEvent(dom, d, ts = Date.now(), replay = false) {
   if ((type === 'click' ? v.clicks : v.copies) >= MAX_EVENTS_PER_VISIT) return;
   const okey = str(d.of, 100), now = ts;
   const kind = KINDS.includes(d.kd) ? d.kd : (okey ? 'offer' : '');
+  const ev = { ts: now, domain_id: dom.id, offer: okey, position: str(d.p, 60), target: str(d.tg, 200), kind, label: str(d.lb, 120), page: str(d.pg, 300) || v.path };
   tx(() => {
-    Q.evIns.run(v.id, dom.id, v.store_id, now, type, okey, str(d.p, 60), str(d.tg, 200), kind, str(d.lb, 120), str(d.tag, 20), str(d.pg, 300));
+    Q.evIns.run(v.id, dom.id, v.store_id, now, type, okey, ev.position, ev.target, kind, ev.label, str(d.tag, 20), ev.page);
     (type === 'click' ? Q.clickInc : Q.copyInc).run(v.id);
     if (okey) Q.offerSeen.run(dom.id, v.store_id, okey, str(d.ot, 300), d.ty === 'deal' ? 'deal' : 'code', now, now, now);
   });
+  // Một IP bấm liên tục cùng một vị trí -> đánh dấu Click tặc (không được làm hỏng việc ghi nhận)
+  if (type === 'click') { try { checkFraud(v.ip, ev); } catch (e) { if (process.env.DEBUG) console.error('checkFraud', e); } }
 }
 async function collect(req, res) {
   if (req.method === 'OPTIONS') { res.writeHead(204, CORS); return res.end(); }
@@ -267,6 +286,22 @@ route('GET', '/api/performance', 'any', (req, res, ctx) => send(res, 200, storeP
 route('GET', '/api/performance/:id', 'any', (req, res, ctx) => { const r = storeDetail(+ctx.params.id, ctx.q); r ? send(res, 200, r) : send(res, 404, { error: 'Không tìm thấy' }); });
 route('GET', '/api/keywords', 'any', (req, res, ctx) => send(res, 200, keywords(ctx.q)));
 route('GET', '/api/countries', 'any', (req, res, ctx) => send(res, 200, countries(ctx.q)));
+route('GET', '/api/devices', 'any', (req, res, ctx) => send(res, 200, devices(ctx.q)));
+
+// Kế hoạch từ khoá
+route('GET', '/api/kw-planner/status', 'any', (req, res) => send(res, 200, { ads: adsConfigured(), countries: Object.keys(GEO), langs: Object.keys(LANG) }));
+route('POST', '/api/kw-planner', 'any', async (req, res, ctx) => {
+  const b = await jsonBody(req);
+  const kws = Array.isArray(b.keywords) ? b.keywords.map((k) => str(k, 80)) : String(b.keywords || '').split(/[\r\n,;]+/).map((k) => str(k, 80));
+  let r;
+  try { r = await planKeywords({ mode: b.mode === 'check' ? 'check' : 'ideas', keywords: kws, url: str(b.url, 500), country: str(b.country, 2).toUpperCase(), lang: str(b.lang, 5), limit: +b.limit, fresh: !!b.fresh }); }
+  catch (e) { return send(res, 400, { error: e.message }); }
+  // Ghép số liệu của chính mình (lượt vào / bấm / copy từ quảng cáo có utm_term trùng từ khoá)
+  const own = ownKeywordStats(ctx.q, r.rows.flatMap((x) => [x.keyword, ...(x.variants || []).map((v) => v.toLowerCase())]));
+  const pick = (x) => [x.keyword, ...(x.variants || []).map((v) => v.toLowerCase())].map((k) => own.get(k)).filter(Boolean)
+    .reduce((a, o) => (a ? { visits: a.visits + o.visits, clicked: a.clicked + o.clicked, clicks: a.clicks + o.clicks, copies: a.copies + o.copies, mobile: a.mobile + o.mobile } : { ...o }), null);
+  send(res, 200, { ...r, rows: r.rows.map((x) => ({ ...x, own: pick(x) })) });
+});
 
 // Domain
 route('GET', '/api/domains', 'any', (req, res, ctx) => send(res, 200, domainsList(ctx.user.role === 'admin')));
@@ -338,6 +373,14 @@ route('DELETE', '/api/r/:res/:id', 'edit', (req, res, ctx) => { if (!RES[ctx.par
 
 // Lượt bấm (mọi nút)
 route('GET', '/api/clicks', 'any', (req, res, ctx) => send(res, 200, clicksReport(ctx.q)));
+
+// IP truy cập & Click tặc
+route('GET', '/api/ips', 'any', (req, res, ctx) => send(res, 200, ipReport(ctx.q)));
+route('GET', '/api/ip', 'any', (req, res, ctx) => { const r = ipDetail(str(ctx.q.get('ip'), 64), ctx.q); r ? send(res, 200, r) : send(res, 404, { error: 'Không có dữ liệu của IP này trong khoảng thời gian đã chọn' }); });
+route('POST', '/api/ips/flag', 'edit', async (req, res, ctx) => {
+  const b = await jsonBody(req); const r = setFlag(str(b.ip, 64), str(b.status, 10), ctx.user.username);
+  r.error ? send(res, 400, r) : send(res, 200, r);
+});
 
 // Tên chiến dịch (ID chiến dịch Google Ads -> tên)
 route('GET', '/api/campaigns', 'any', (req, res, ctx) => {
